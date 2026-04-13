@@ -1,12 +1,10 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
 import adminApi from '@/lib/api/admin';
-import { AdminNavigation } from '@/components/layout/AdminNavigation';
+import { getUnitConversionLabel } from '@/lib/utils/unit';
 
 export default function StockSearchPage() {
-  const router = useRouter();
   const [searchTerm, setSearchTerm] = useState('');
   const [stocks, setStocks] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
@@ -39,19 +37,20 @@ export default function StockSearchPage() {
         setSelectedColumns(preferences.stockColumns);
       } else {
         // Varsayılan kolonlar
-        setSelectedColumns(['msg_S_0078', 'msg_S_0870', 'KDV Oranı', 'Güncel Maliyet Kdv Dahil', 'Merkez Depo', 'Toplam Satılabilir']);
+        setSelectedColumns(['msg_S_0078', 'msg_S_0870', 'KDV Oranı', 'Güncel Maliyet Kdv Dahil', 'Merkez Depo', 'Toplam Satılabilir', 'Koli Ici']);
       }
     } catch (err) {
       console.error('Tercihler yüklenemedi:', err);
       // Varsayılan kolonlar
-      setSelectedColumns(['msg_S_0078', 'msg_S_0870', 'KDV Oranı', 'Güncel Maliyet Kdv Dahil', 'Merkez Depo', 'Toplam Satılabilir']);
+      setSelectedColumns(['msg_S_0078', 'msg_S_0870', 'KDV Oranı', 'Güncel Maliyet Kdv Dahil', 'Merkez Depo', 'Toplam Satılabilir', 'Koli Ici']);
     }
   };
 
   const loadAvailableColumns = async () => {
     try {
       const { columns } = await adminApi.getStockColumns();
-      setAvailableColumns(columns);
+      const nextColumns = columns.includes('Koli Ici') ? columns : [...columns, 'Koli Ici'];
+      setAvailableColumns(nextColumns);
     } catch (err) {
       console.error('Kolonlar yüklenemedi:', err);
     }
@@ -120,6 +119,14 @@ export default function StockSearchPage() {
     return String(value);
   };
 
+  const getColumnValue = (column: string, row: any) => {
+    if (column === 'Koli Ici') {
+      const label = getUnitConversionLabel(row['Birim'], row['2. Birim'], row['2. Birim Katsayısı']);
+      return label || '-';
+    }
+    return formatValue(row[column]);
+  };
+
   const handleRowClick = (stock: any) => {
     setSelectedStock(stock);
     setShowDetailModal(true);
@@ -132,7 +139,6 @@ export default function StockSearchPage() {
 
   return (
     <>
-      <AdminNavigation />
       <div className="min-h-screen bg-gray-50 p-4 md:p-6">
         <div className="max-w-7xl mx-auto">
         {/* Header */}
@@ -249,7 +255,7 @@ export default function StockSearchPage() {
                           }`}
                           style={colIdx === 0 ? { left: 0 } : colIdx === 1 ? { left: '150px' } : {}}
                         >
-                          {formatValue(stock[column])}
+                          {getColumnValue(column, stock)}
                         </td>
                       ))}
                     </tr>
@@ -341,7 +347,6 @@ export default function StockSearchPage() {
               <div className="p-6 overflow-y-auto flex-1">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   {availableColumns.map((column) => {
-                    const value = selectedStock[column];
                     if (column === 'msg_S_0088') return null; // GUID'i göstermeyelim
 
                     return (
@@ -350,7 +355,7 @@ export default function StockSearchPage() {
                           {getColumnDisplayName(column)}
                         </dt>
                         <dd className="text-base text-gray-900 font-semibold">
-                          {formatValue(value)}
+                          {getColumnValue(column, selectedStock)}
                         </dd>
                       </div>
                     );

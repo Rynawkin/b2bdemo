@@ -10,6 +10,8 @@ router.use(authenticate);
 // Stok arama
 router.get('/stocks', searchController.searchStocks);
 router.get('/stocks/columns', searchController.getStockColumns);
+router.get('/stocks/units', searchController.getStockUnits);
+router.post('/stocks/by-codes', searchController.getStocksByCodes);
 
 // Cari arama
 router.get('/customers', searchController.searchCustomers);

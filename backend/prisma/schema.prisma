@@ -18,6 +18,7 @@ enum UserRole {
   SALES_REP   // Satış temsilcisi (sektör bazlı erişim)
   MANAGER     // Yönetici (tüm siparişleri görebilir)
   DIVERSEY    // Diversey distribütör kullanıcısı (sadece Diversey ürünlerini görür)
+  DEPOCU      // Depo kiosk + hizli perakende satis kullanicisi
 }
 
 enum CustomerType {
@@ -32,6 +33,34 @@ enum PriceType {
   WHITE     // Beyaz
 }
 
+enum PriceVisibility {
+  INVOICED_ONLY
+  WHITE_ONLY
+  BOTH
+}
+
+enum PriceMode {
+  LIST
+  EXCESS
+}
+
+enum ProductComplementMode {
+  AUTO
+  MANUAL
+}
+
+enum CustomerRequestStatus {
+  PENDING
+  CONVERTED
+  REJECTED
+}
+
+enum CustomerRequestItemStatus {
+  PENDING
+  CONVERTED
+  REJECTED
+}
+
 enum OrderStatus {
   PENDING   // Bekliyor (admin onayı bekliyor)
   APPROVED  // Onaylandı ve Mikro'ya yazıldı
@@ -44,10 +73,173 @@ enum OrderItemStatus {
   REJECTED  // Reddedildi
 }
 
+enum WarehouseWorkflowStatus {
+  PENDING
+  PICKING
+  READY_FOR_LOADING
+  PARTIALLY_LOADED
+  LOADED
+  DISPATCHED
+}
+
+enum WarehouseWorkflowItemStatus {
+  PENDING
+  PICKED
+  PARTIAL
+  MISSING
+  EXTRA
+}
+
+enum WarehouseImageIssueStatus {
+  OPEN
+  REVIEWED
+  FIXED
+}
+
+
+
+
+enum QuoteStatus {
+  PENDING_APPROVAL
+  SENT_TO_MIKRO
+  REJECTED
+  CUSTOMER_ACCEPTED
+  CUSTOMER_REJECTED
+}
+
+enum QuoteConversionSource {
+  B2B
+  MIKRO
+}
+
+
+enum QuoteHistoryAction {
+  CREATED
+  UPDATED
+  STATUS_CHANGED
+  CONVERTED
+}
+
+
+enum QuoteItemStatus {
+  OPEN
+  CONVERTED
+  CLOSED
+}
+
+
+enum QuotePriceSource {
+  LAST_SALE   // Son satÄ±ÅŸ fiyatÄ±
+  PRICE_LIST  // Mikro fiyat listesi
+  MANUAL      // Manuel fiyat
+}
+
+
+
+enum CustomerActivityType {
+  PAGE_VIEW
+  PRODUCT_VIEW
+  CART_ADD
+  CART_REMOVE
+  CART_UPDATE
+  ACTIVE_PING
+  CLICK
+  SEARCH
+}
+
 enum CostCalculationMethod {
   LAST_ENTRY      // Son giriş fiyatı
   CURRENT_COST    // Güncel maliyet
   DYNAMIC         // Dinamik hesaplama (tarih ve fiyat farklarına göre)
+}
+
+enum LastPriceGuardType {
+  COST
+  PRICE_LIST
+}
+
+enum LastPriceCostBasis {
+  CURRENT_COST
+  LAST_ENTRY
+}
+
+enum TaskStatus {
+  NEW
+  TRIAGE
+  IN_PROGRESS
+  WAITING
+  REVIEW
+  DONE
+  CANCELLED
+}
+
+enum TaskPriority {
+  NONE
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum TaskType {
+  BUG
+  IMPROVEMENT
+  FEATURE
+  OPERATION
+  PROCUREMENT
+  REPORT
+  DATA_SYNC
+  ACCESS
+  DESIGN_UX
+  OTHER
+}
+
+enum TaskVisibility {
+  PUBLIC
+  INTERNAL
+}
+
+enum TaskLinkType {
+  PRODUCT
+  QUOTE
+  ORDER
+  CUSTOMER
+  PAGE
+  OTHER
+}
+
+enum TaskView {
+  KANBAN
+  LIST
+}
+
+enum VadeBalanceSource {
+  MIKRO
+  EXCEL
+  MANUAL
+}
+
+enum VadeSyncStatus {
+  SUCCESS
+  FAILED
+  PARTIAL
+}
+
+enum ReportSyncStatus {
+  SUCCESS
+  FAILED
+}
+
+enum EInvoiceMatchStatus {
+  MATCHED
+  PARTIAL
+  NOT_FOUND
+}
+
+enum SupplierPriceListStatus {
+  PENDING
+  COMPLETED
+  FAILED
 }
 
 // ==================== USERS ====================
@@ -60,14 +252,33 @@ model User {
   mikroName     String?       // Mikro'dan gelen orijinal isim (değişmez)
   displayName   String?       // Kullanıcının gösterilen ismi (düzenlenebilir)
   role          UserRole      @default(CUSTOMER)
+  parentCustomerId String?
+  parentCustomer   User?        @relation("CustomerHierarchy", fields: [parentCustomerId], references: [id])
+  priceVisibility  PriceVisibility @default(INVOICED_ONLY)
+
 
   // Müşteri bilgileri (sadece CUSTOMER role için)
   customerType        CustomerType?
   mikroCariCode       String?       @unique // Mikro ERP'deki cari kodu
-  vatDisplayPreference String       @default("WITH_VAT") // "WITH_VAT" | "WITHOUT_VAT"
+  vatDisplayPreference String       @default("WITHOUT_VAT") // "WITH_VAT" | "WITHOUT_VAT"
   // Optional price list overrides (use settings when null)
   invoicedPriceListNo Int?
   whitePriceListNo    Int?
+  lastPriceGuardInvoicedListNo Int?
+  lastPriceGuardWhiteListNo    Int?
+  useLastPrices       Boolean          @default(false)
+  lastPriceGuardType  LastPriceGuardType @default(COST)
+  lastPriceCostBasis  LastPriceCostBasis @default(CURRENT_COST)
+  lastPriceMinCostPercent Float         @default(10)
+  quoteLastSalesCount Int          @default(1)
+  quoteWhatsappTemplate String?
+  quoteResponsibleCode String?
+  quoteColumnWidths    Json?
+  quotePoolSort        String?
+  quotePoolPriceListNo Int?
+  quotePoolColorRules  Json?
+  taskColorRules       Json?
+  taskDefaultView       TaskView    @default(KANBAN)
 
   // Mikro'dan senkronize edilen cari bilgileri
   city                String?       // Şehir
@@ -76,7 +287,10 @@ model User {
   isLocked            Boolean       @default(false) // Cari kilitli mi
   groupCode           String?       // Grup kodu
   sectorCode          String?       // Sektör kodu
-  paymentTerm         Int?          // Vade günü
+  paymentTerm         Int?          // Vade günü (deprecated - use payment plan)
+  paymentPlanNo       Int?
+  paymentPlanCode     String?
+  paymentPlanName     String?
   hasEInvoice         Boolean       @default(false) // E-fatura var mı
   balance             Float         @default(0) // Güncel bakiye (TL)
   balanceUpdatedAt    DateTime?     // Bakiye güncellenme tarihi
@@ -90,10 +304,45 @@ model User {
   updatedAt     DateTime      @updatedAt
 
   // Relations
+  subUsers          User[]       @relation("CustomerHierarchy")
+  priceAgreements   CustomerPriceAgreement[]
+  createdRequests   CustomerRequest[] @relation("CustomerRequestCreator")
+  receivedRequests  CustomerRequest[] @relation("CustomerRequestParent")
+  convertedRequests CustomerRequest[] @relation("CustomerRequestConverter")
+  requestedOrders   Order[]      @relation("OrderRequestedBy")
   orders        Order[]
   cart          Cart?
   searchPreferences UserSearchPreferences?
+  quotes             Quote[]       @relation("QuoteCustomer")
+  createdQuotes      Quote[]       @relation("QuoteCreator")
+  adminQuotes        Quote[]       @relation("QuoteAdmin")
+  contacts           CustomerContact[]
+  createdTasks       Task[]        @relation("TaskCreator")
+  assignedTasks      Task[]        @relation("TaskAssignee")
+  customerTasks      Task[]        @relation("TaskCustomer")
+  taskTemplates      TaskTemplate[] @relation("TaskTemplateCreator")
+  taskComments       TaskComment[] @relation("TaskCommentAuthor")
+  taskAttachments    TaskAttachment[] @relation("TaskAttachmentUploader")
+  taskStatusChanges  TaskStatusHistory[] @relation("TaskStatusChanger")
+  notifications      Notification[]
+  vadeBalance        VadeBalance?
+  vadeNotes          VadeNote[]       @relation("VadeNoteCustomer")
+  vadeNotesAuthored  VadeNote[]       @relation("VadeNoteAuthor")
+  vadeClassification VadeClassification?
+  vadeClassificationsCreated VadeClassification[] @relation("VadeClassificationCreator")
+  vadeClassificationsUpdated VadeClassification[] @relation("VadeClassificationUpdater")
+  vadeAssignments    VadeAssignment[] @relation("VadeAssignmentStaff")
+  vadeAssignmentsAsCustomer VadeAssignment[] @relation("VadeAssignmentCustomer")
+  vadeAssignmentsCreated VadeAssignment[] @relation("VadeAssignmentCreator")
+  eInvoiceDocuments  EInvoiceDocument[] @relation("EInvoiceCustomer")
+  eInvoiceUploads    EInvoiceDocument[] @relation("EInvoiceUploader")
+  supplierPriceListUploads SupplierPriceListUpload[] @relation("SupplierPriceListUploader")
+  priceListRules     CustomerPriceListRule[]
 
+  quotesUpdated      Quote[]       @relation("QuoteUpdater")
+  quoteHistories     QuoteHistory[] @relation("QuoteHistoryActor")
+  activityEvents     CustomerActivityEvent[] @relation("CustomerActivityUser")
+  activityCustomerEvents CustomerActivityEvent[] @relation("CustomerActivityCustomer")
   @@index([email])
   @@index([role])
   @@index([mikroCariCode])
@@ -121,6 +370,39 @@ model UserSearchPreferences {
   updatedAt             DateTime  @updatedAt
 
   @@index([userId])
+}
+
+// ==================== CUSTOMER ACTIVITY ====================
+
+model CustomerActivityEvent {
+  id             String               @id @default(uuid())
+  type           CustomerActivityType
+  userId         String
+  user           User                 @relation("CustomerActivityUser", fields: [userId], references: [id], onDelete: Cascade)
+  customerId     String?
+  customer       User?                @relation("CustomerActivityCustomer", fields: [customerId], references: [id], onDelete: SetNull)
+  sessionId      String?
+  pagePath       String?
+  pageTitle      String?
+  referrer       String?
+  productId      String?
+  product        Product?             @relation(fields: [productId], references: [id], onDelete: SetNull)
+  productCode    String?
+  cartItemId     String?
+  quantity       Int?
+  durationSeconds Int?
+  clickCount     Int?
+  meta           Json?
+  ip             String?
+  userAgent      String?
+  createdAt      DateTime             @default(now())
+
+  @@index([userId, createdAt])
+  @@index([customerId, createdAt])
+  @@index([type, createdAt])
+  @@index([productId])
+  @@index([pagePath])
+  @@index([sessionId])
 }
 
 // ==================== ROLE PERMISSIONS ====================
@@ -169,9 +451,149 @@ model Settings {
 
   // Son senkronizasyon
   lastSyncAt                DateTime?
+  lastVadeSyncAt            DateTime?
+  marginReportEmailEnabled  Boolean                 @default(false)
+  marginReportEmailRecipients String[]              @default([])
+  marginReportEmailSubject  String                  @default("Kar Marji Raporu")
+  marginReportEmailColumns String[]              @default([])
 
   createdAt                 DateTime                @default(now())
   updatedAt                 DateTime                @updatedAt
+}
+
+// ==================== VADE TRACKING ====================
+
+model VadeBalance {
+  id                String             @id @default(uuid())
+  userId            String             @unique
+  user              User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  pastDueBalance    Float              @default(0)
+  pastDueDate       DateTime?
+  notDueBalance     Float              @default(0)
+  notDueDate        DateTime?
+  totalBalance      Float              @default(0)
+  valor             Int                @default(0)
+  paymentTermLabel  String?
+  referenceDate     DateTime?
+  source            VadeBalanceSource  @default(MIKRO)
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+
+  @@index([pastDueDate])
+  @@index([notDueDate])
+}
+
+model VadeNote {
+  id                String   @id @default(uuid())
+  customerId        String
+  customer          User     @relation("VadeNoteCustomer", fields: [customerId], references: [id], onDelete: Cascade)
+  authorId          String?
+  author            User?    @relation("VadeNoteAuthor", fields: [authorId], references: [id], onDelete: SetNull)
+  noteContent       String
+  promiseDate       DateTime?
+  tags              String[] @default([])
+  reminderDate      DateTime?
+  reminderNote      String?
+  reminderCompleted Boolean  @default(false)
+  reminderSentAt    DateTime?
+  balanceAtTime     Float?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([customerId])
+  @@index([authorId])
+  @@index([reminderDate])
+  @@index([reminderCompleted])
+}
+
+model VadeClassification {
+  id                   String   @id @default(uuid())
+  customerId           String   @unique
+  customer             User     @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  classification       String
+  customClassification String?
+  riskScore            Int?
+  createdById          String?
+  createdBy            User?    @relation("VadeClassificationCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  updatedById          String?
+  updatedBy            User?    @relation("VadeClassificationUpdater", fields: [updatedById], references: [id], onDelete: SetNull)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  @@index([customerId])
+}
+
+model VadeAssignment {
+  id           String   @id @default(uuid())
+  staffId      String
+  staff        User     @relation("VadeAssignmentStaff", fields: [staffId], references: [id], onDelete: Cascade)
+  customerId   String
+  customer     User     @relation("VadeAssignmentCustomer", fields: [customerId], references: [id], onDelete: Cascade)
+  assignedById String?
+  assignedBy   User?    @relation("VadeAssignmentCreator", fields: [assignedById], references: [id], onDelete: SetNull)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([staffId, customerId])
+  @@index([staffId])
+  @@index([customerId])
+}
+
+model VadeSyncLog {
+  id             String          @id @default(uuid())
+  source         VadeBalanceSource
+  status         VadeSyncStatus
+  recordsTotal   Int             @default(0)
+  recordsUpdated Int             @default(0)
+  recordsSkipped Int             @default(0)
+  startedAt      DateTime        @default(now())
+  completedAt    DateTime?
+  errorMessage   String?
+  details        Json?
+
+  @@index([source])
+  @@index([status])
+  @@index([startedAt])
+}
+
+// ==================== E-INVOICE DOCUMENTS ====================
+
+model EInvoiceDocument {
+  id            String              @id @default(uuid())
+  invoiceNo     String              @unique
+  evrakSeri     String?
+  evrakSira     Int?
+  eInvoiceUuid  String?
+  customerCode  String?
+  customerName  String?
+  customerId    String?
+  customer      User?               @relation("EInvoiceCustomer", fields: [customerId], references: [id], onDelete: SetNull)
+  issueDate     DateTime?
+  sentAt        DateTime?
+  subtotalAmount Float?
+  totalAmount    Float?
+  currency       String             @default("TRY")
+
+  fileName      String
+  originalName  String
+  mimeType      String
+  size          Int
+  storagePath   String
+
+  uploadedById  String
+  uploadedBy    User                @relation("EInvoiceUploader", fields: [uploadedById], references: [id], onDelete: Restrict)
+
+  matchStatus   EInvoiceMatchStatus @default(MATCHED)
+  matchError    String?
+
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+
+  @@index([customerId])
+  @@index([customerCode])
+  @@index([issueDate])
+  @@index([sentAt])
+  @@index([matchStatus])
 }
 
 // ==================== CATEGORIES ====================
@@ -188,6 +610,7 @@ model Category {
   // Relations
   products        Product[]
   priceRules      CategoryPriceRule[]
+  priceListRules  CustomerPriceListRule[]
 }
 
 // ==================== PRODUCTS ====================
@@ -196,7 +619,11 @@ model Product {
   id                      String    @id @default(uuid())
   mikroCode               String    @unique
   name                    String
+  foreignName             String?   // Tedarikci urun kodu (Mikro: sto_yabanci_isim)
+  brandCode               String?   // Mikro marka kodu (sto_marka_kodu)
   unit                    String    @default("ADET") // Birim
+  unit2                   String?   // 2. Birim
+  unit2Factor             Float?    // 2. Birim Katsayısı
 
   categoryId              String
   category                Category  @relation(fields: [categoryId], references: [id])
@@ -222,6 +649,7 @@ model Product {
   // Bekleyen siparişler
   pendingCustomerOrders   Int       @default(0)
   pendingPurchaseOrders   Int       @default(0)
+  pendingCustomerOrdersByWarehouse Json @default("{}")
 
   // Hesaplanan fazla stok (toplam)
   excessStock             Int       @default(0)
@@ -239,8 +667,17 @@ model Product {
   // }
   prices                  Json      @default("{}")
 
+  // Complementary product recommendation mode
+  complementMode          ProductComplementMode @default(AUTO)
+  complementGroupCode     String?   // Tamamlayici grup kodu
+
   // Ürün resmi
   imageUrl                String?
+  imageChecksum           String?
+  imageSyncStatus         String?
+  imageSyncErrorType      String?
+  imageSyncErrorMessage   String?
+  imageSyncUpdatedAt      DateTime?
 
   active                  Boolean   @default(true)
   createdAt               DateTime  @default(now())
@@ -249,11 +686,164 @@ model Product {
   // Relations
   cartItems               CartItem[]
   orderItems              OrderItem[]
+  quoteItems              QuoteItem[]
   priceOverrides          ProductPriceOverride[]
+  familyItems             ProductFamilyItem[]
+  priceAgreements         CustomerPriceAgreement[]
+  customerRequestItems    CustomerRequestItem[]
+  supplierPriceListMatches SupplierPriceListMatch[]
+  complementAuto          ProductComplementAuto[]
+  complementManual        ProductComplementManual[]
+  complementAutoRelated   ProductComplementAuto[] @relation("ProductComplementAutoRelated")
+  complementManualRelated ProductComplementManual[] @relation("ProductComplementManualRelated")
+  activityEvents          CustomerActivityEvent[]
 
   @@index([mikroCode])
+  @@index([foreignName])
   @@index([excessStock])
   @@index([categoryId])
+  @@index([imageSyncStatus])
+  @@index([imageSyncErrorType])
+  @@index([imageSyncUpdatedAt])
+}
+
+model ProductComplementAuto {
+  id              String   @id @default(uuid())
+  productId       String
+  product         Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  relatedProductId String
+  relatedProduct  Product  @relation("ProductComplementAutoRelated", fields: [relatedProductId], references: [id], onDelete: Cascade)
+  pairCount       Int      @default(0)
+  rank            Int      @default(0)
+  windowStart     DateTime
+  windowEnd       DateTime
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([productId, relatedProductId])
+  @@index([productId, rank])
+}
+
+model ProductComplementManual {
+  id              String   @id @default(uuid())
+  productId       String
+  product         Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  relatedProductId String
+  relatedProduct  Product  @relation("ProductComplementManualRelated", fields: [relatedProductId], references: [id], onDelete: Cascade)
+  sortOrder       Int      @default(0)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([productId, relatedProductId])
+  @@index([productId, sortOrder])
+}
+
+// ==================== SUPPLIERS & PRICE LISTS ====================
+
+model Supplier {
+  id                String    @id @default(uuid())
+  name              String    @unique
+  active            Boolean   @default(true)
+  discount1         Float?
+  discount2         Float?
+  discount3         Float?
+  discount4         Float?
+  discount5         Float?
+  priceIsNet        Boolean   @default(false)
+  priceIncludesVat  Boolean   @default(false)
+  priceByColor      Boolean   @default(false)
+  defaultVatRate    Float?
+  excelSheetName    String?
+  excelHeaderRow    Int?
+  excelCodeHeader   String?
+  excelNameHeader   String?
+  excelPriceHeader  String?
+  pdfPriceIndex     Int?
+  pdfCodePattern    String?
+  discountRules     Json?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  priceListUploads  SupplierPriceListUpload[]
+}
+
+model SupplierPriceListUpload {
+  id              String    @id @default(uuid())
+  supplierId      String
+  supplier        Supplier  @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  uploadedById    String
+  uploadedBy      User      @relation("SupplierPriceListUploader", fields: [uploadedById], references: [id], onDelete: Restrict)
+  status          SupplierPriceListStatus @default(PENDING)
+  fileCount       Int       @default(0)
+  totalItems      Int       @default(0)
+  matchedItems    Int       @default(0)
+  unmatchedItems  Int       @default(0)
+  multiMatchItems Int       @default(0)
+  createdAt       DateTime  @default(now())
+  completedAt     DateTime?
+  errorMessage    String?
+  details         Json?
+
+  files           SupplierPriceListFile[]
+  items           SupplierPriceListItem[]
+
+  @@index([supplierId])
+  @@index([uploadedById])
+  @@index([createdAt])
+}
+
+model SupplierPriceListFile {
+  id           String   @id @default(uuid())
+  uploadId     String
+  upload       SupplierPriceListUpload @relation(fields: [uploadId], references: [id], onDelete: Cascade)
+  fileName     String
+  originalName String
+  mimeType     String
+  size         Int
+  storagePath  String
+  createdAt    DateTime @default(now())
+
+  @@index([uploadId])
+}
+
+model SupplierPriceListItem {
+  id                 String   @id @default(uuid())
+  uploadId           String
+  upload             SupplierPriceListUpload @relation(fields: [uploadId], references: [id], onDelete: Cascade)
+  supplierCode       String
+  supplierName       String?
+  sourcePrice        Float?
+  netPrice           Float?
+  priceCurrency      String?
+  priceIncludesVat   Boolean  @default(false)
+  rawLine            String?
+  matchCount         Int      @default(0)
+  matchedProductIds  String[] @default([])
+  createdAt          DateTime @default(now())
+
+  matches            SupplierPriceListMatch[]
+
+  @@index([uploadId])
+  @@index([supplierCode])
+}
+
+model SupplierPriceListMatch {
+  id             String   @id @default(uuid())
+  itemId         String
+  item           SupplierPriceListItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  productId      String
+  product        Product  @relation(fields: [productId], references: [id], onDelete: Restrict)
+  productCode    String
+  productName    String
+  currentCost    Float?
+  sourcePrice    Float?
+  vatRate        Float?
+  netPrice       Float?
+  costDifference Float?
+  createdAt      DateTime @default(now())
+
+  @@index([itemId])
+  @@index([productId])
 }
 
 // ==================== PRICE RULES ====================
@@ -290,6 +880,25 @@ model ProductPriceOverride {
   @@unique([productId, customerType])
 }
 
+// Musteri bazli fiyat listesi kurallari (marka/kategori)
+model CustomerPriceListRule {
+  id                   String    @id @default(uuid())
+  customerId           String
+  customer             User      @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  brandCode            String?
+  categoryId           String?
+  category             Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  invoicedPriceListNo  Int
+  whitePriceListNo     Int
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  @@unique([customerId, brandCode, categoryId])
+  @@index([customerId])
+  @@index([brandCode])
+  @@index([categoryId])
+}
+
 // ==================== CART ====================
 
 model Cart {
@@ -315,7 +924,11 @@ model CartItem {
 
   quantity        Int
   priceType       PriceType   // INVOICED veya WHITE
+  priceMode       PriceMode   @default(LIST)
   unitPrice       Float       // O andaki fiyat (snapshot)
+  lineNote          String?
+  approvedQuantity  Int?
+  responsibilityCenter String?
 
   createdAt       DateTime    @default(now())
   updatedAt       DateTime    @updatedAt
@@ -332,6 +945,9 @@ model Order {
   userId          String
   user            User          @relation(fields: [userId], references: [id])
 
+  requestedById   String?
+  requestedBy     User?         @relation("OrderRequestedBy", fields: [requestedById], references: [id])
+
   status          OrderStatus   @default(PENDING)
 
   // Sipariş detayları
@@ -341,6 +957,14 @@ model Order {
   // Mikro'ya yazılan sipariş ID'leri
   // [invoiced_siparis_id, white_siparis_id] veya sadece [invoiced] veya [white]
   mikroOrderIds   String[]      @default([])
+
+  customerRequest CustomerRequest? @relation("CustomerRequestOrder")
+
+  sourceQuoteId   String?
+  sourceQuote     Quote?        @relation("QuoteOrders", fields: [sourceQuoteId], references: [id])
+
+  customerOrderNumber String?
+  deliveryLocation String?
 
   // Admin notu
   adminNote       String?
@@ -371,6 +995,9 @@ model OrderItem {
   priceType       PriceType
   unitPrice       Float
   totalPrice      Float
+  lineNote          String?
+  approvedQuantity  Int?
+  responsibilityCenter String?
 
   // Item-level approval (kısmi onay için)
   status          OrderItemStatus   @default(PENDING)
@@ -384,6 +1011,234 @@ model OrderItem {
 
   @@index([orderId])
   @@index([status])
+}
+
+// ==================== CUSTOMER AGREEMENTS ====================
+
+model CustomerPriceAgreement {
+  id           String   @id @default(uuid())
+
+  customerId   String
+  customer     User     @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  productId    String
+  product      Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  priceInvoiced Float
+  priceWhite   Float?
+  customerProductCode String?
+  minQuantity  Int      @default(1)
+  validFrom    DateTime
+  validTo      DateTime?
+
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([customerId, productId])
+  @@index([customerId])
+  @@index([productId])
+  @@index([validFrom])
+  @@index([validTo])
+}
+
+// ==================== CUSTOMER REQUESTS ====================
+
+model CustomerRequest {
+  id              String                 @id @default(uuid())
+
+  parentCustomerId String
+  parentCustomer  User                   @relation("CustomerRequestParent", fields: [parentCustomerId], references: [id])
+
+  requestedById   String
+  requestedBy     User                   @relation("CustomerRequestCreator", fields: [requestedById], references: [id])
+
+  convertedById   String?
+  convertedBy     User?                  @relation("CustomerRequestConverter", fields: [convertedById], references: [id])
+
+  status          CustomerRequestStatus  @default(PENDING)
+  note            String?
+  orderId         String?                @unique
+  order           Order?                 @relation("CustomerRequestOrder", fields: [orderId], references: [id])
+
+  items           CustomerRequestItem[]
+
+  createdAt       DateTime               @default(now())
+  updatedAt       DateTime               @updatedAt
+  convertedAt     DateTime?
+
+  @@index([parentCustomerId])
+  @@index([requestedById])
+  @@index([status])
+  @@index([orderId])
+}
+
+model CustomerRequestItem {
+  id                String      @id @default(uuid())
+
+  requestId         String
+  request           CustomerRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+
+  productId         String
+  product           Product     @relation(fields: [productId], references: [id])
+
+  quantity          Int
+  status            CustomerRequestItemStatus @default(PENDING)
+  priceMode         PriceMode   @default(LIST)
+  lineNote          String?
+  approvedQuantity  Int?
+  responsibilityCenter String?
+  selectedPriceType PriceType?
+  selectedUnitPrice Float?
+  selectedTotalPrice Float?
+
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+
+  @@index([requestId])
+  @@index([productId])
+}
+
+// ==================== QUOTES ====================
+
+model Quote {
+  id                String        @id @default(uuid())
+  quoteNumber       String        @unique // "TEK-2025-00001"
+
+  status            QuoteStatus   @default(PENDING_APPROVAL)
+
+  customerId        String
+  customer          User          @relation("QuoteCustomer", fields: [customerId], references: [id])
+
+  createdById       String
+  createdBy         User          @relation("QuoteCreator", fields: [createdById], references: [id])
+
+  adminUserId       String?
+  updatedById       String?
+  updatedBy         User?         @relation("QuoteUpdater", fields: [updatedById], references: [id])
+
+  convertedAt       DateTime?
+  convertedSource   QuoteConversionSource?
+
+  orders            Order[]       @relation("QuoteOrders")
+  histories         QuoteHistory[]
+  adminUser         User?         @relation("QuoteAdmin", fields: [adminUserId], references: [id])
+
+  items             QuoteItem[]
+  note              String?
+  documentNo        String?
+  responsibleCode   String?
+  contactId         String?
+  contact           CustomerContact? @relation("QuoteContact", fields: [contactId], references: [id])
+  contactName       String?
+  contactPhone      String?
+  contactEmail      String?
+  validityDate      DateTime
+  vatZeroed         Boolean       @default(false)
+  totalAmount       Float
+  totalVat          Float
+  grandTotal        Float
+
+  mikroNumber       String?
+  mikroGuid         String?
+  mikroUpdatedAt    DateTime?
+
+  adminNote         String?
+  adminActionAt     DateTime?
+  customerRespondedAt DateTime?
+
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  @@index([customerId])
+  @@index([createdById])
+  @@index([status])
+  @@index([mikroNumber])
+}
+
+model QuoteItem {
+  id                String            @id @default(uuid())
+
+  quoteId           String
+  quote             Quote             @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+
+  productId         String?
+  product           Product?          @relation(fields: [productId], references: [id])
+
+  productCode       String
+  productName       String
+  unit              String           @default("ADET")
+  quantity          Int
+  unitPrice         Float
+  totalPrice        Float
+  lineOrder       Int              @default(0)
+
+  priceSource       QuotePriceSource
+  priceListNo       Int?
+  priceType         PriceType         @default(INVOICED)
+
+  vatRate           Float
+  vatZeroed         Boolean           @default(false)
+
+  isManualLine      Boolean           @default(false)
+  isBlocked         Boolean           @default(false)
+  blockedReason     String?
+
+  status            QuoteItemStatus   @default(OPEN)
+  statusUpdatedAt   DateTime          @default(now())
+  closedReason      String?
+  closedAt          DateTime?
+  convertedAt       DateTime?
+
+
+  sourceSaleDate    DateTime?
+  sourceSalePrice   Float?
+  sourceSaleQuantity Float?
+  sourceSaleVatZeroed Boolean?
+
+  lineDescription   String?
+  manualImageUrl    String?
+
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+
+  @@index([quoteId])
+  @@index([productId])
+  @@index([productCode])
+  @@index([priceSource])
+  @@index([status])
+  @@index([statusUpdatedAt])
+}
+
+model QuoteHistory {
+  id        String              @id @default(uuid())
+  quoteId   String
+  quote     Quote               @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+  action    QuoteHistoryAction
+  summary   String?
+  payload   Json?
+  actorId   String?
+  actor     User?               @relation("QuoteHistoryActor", fields: [actorId], references: [id])
+  createdAt DateTime            @default(now())
+
+  @@index([quoteId])
+  @@index([actorId])
+}
+
+model CustomerContact {
+  id         String   @id @default(uuid())
+  customerId String
+  customer   User     @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  name       String
+  phone      String?
+  email      String?
+
+  quotes      Quote[] @relation("QuoteContact")
+
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([customerId])
 }
 
 // ==================== SYNC LOGS ====================
@@ -413,6 +1268,40 @@ model SyncLog {
   @@index([syncType])
   @@index([status])
 }
+
+// ==================== MARGIN COMPLIANCE REPORT CACHE ====================
+
+model MarginComplianceReportDay {
+  id           String           @id @default(uuid())
+  reportDate   DateTime         @unique
+  status       ReportSyncStatus @default(SUCCESS)
+  rowCount     Int              @default(0)
+  errorMessage String?
+  syncedAt     DateTime         @default(now())
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+
+  @@index([reportDate])
+  @@index([status])
+}
+
+model MarginComplianceReportRow {
+  id           String   @id @default(uuid())
+  reportDate   DateTime
+  sectorCode   String?
+  groupCode    String?
+  avgMargin    Float?
+  totalRevenue Float?
+  totalProfit  Float?
+  data         Json
+  createdAt    DateTime @default(now())
+
+  @@index([reportDate])
+  @@index([sectorCode])
+  @@index([groupCode])
+  @@index([avgMargin])
+}
+
 
 // ==================== CAMPAIGNS ====================
 
@@ -528,6 +1417,176 @@ model PendingMikroOrder {
   @@index([syncedAt])
   @@index([emailSent])
   @@index([sectorCode])
+}
+
+// Tedarikciye PDF/WhatsApp iletim isaretleri (manuel)
+model SupplierTransmissionLog {
+  id                  String    @id @default(uuid())
+  customerCode        String    @map("customercode")
+  customerName        String?   @map("customername")
+  transmittedAt       DateTime  @default(now()) @map("transmittedat")
+  transmittedByUserId String?   @map("transmittedbyuserid")
+  transmittedByName   String?   @map("transmittedbyname")
+  createdAt           DateTime  @default(now()) @map("createdat")
+
+  @@index([customerCode], map: "suppliertransmissionlog_customercode_idx")
+  @@index([transmittedAt], map: "suppliertransmissionlog_transmittedat_idx")
+  @@map("suppliertransmissionlog")
+}
+
+model ProductFamily {
+  id         String              @id @default(uuid())
+  name       String
+  code       String?             @unique
+  note       String?
+  active     Boolean             @default(true)
+  createdAt  DateTime            @default(now())
+  updatedAt  DateTime            @updatedAt
+  items      ProductFamilyItem[]
+
+  @@index([active])
+}
+
+model ProductFamilyItem {
+  id          String         @id @default(uuid())
+  familyId    String
+  family      ProductFamily  @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  productId   String?
+  product     Product?       @relation(fields: [productId], references: [id], onDelete: SetNull)
+  productCode String
+  productName String?
+  priority    Int            @default(100)
+  active      Boolean        @default(true)
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  @@unique([familyId, productCode])
+  @@index([productCode])
+  @@index([familyId, priority])
+}
+
+model WarehouseOrderWorkflow {
+  id                    String                  @id @default(uuid())
+  mikroOrderNumber      String                  @unique
+  orderSeries           String
+  orderSequence         Int
+  customerCode          String
+  customerName          String
+  status                WarehouseWorkflowStatus @default(PENDING)
+  assignedPickerUserId  String?
+  startedAt             DateTime?
+  loadingStartedAt      DateTime?
+  loadedAt              DateTime?
+  dispatchedAt          DateTime?
+  mikroDeliveryNoteNo   String?
+  dispatchedByUserId    String?
+  lastActionAt          DateTime?
+  notes                 String?
+  items                 WarehouseOrderWorkflowItem[]
+  createdAt             DateTime                @default(now())
+  updatedAt             DateTime                @updatedAt
+
+  @@index([orderSeries])
+  @@index([status])
+  @@index([customerCode])
+  @@index([mikroDeliveryNoteNo])
+}
+
+model WarehouseOrderWorkflowItem {
+  id              String                      @id @default(uuid())
+  workflowId      String
+  workflow        WarehouseOrderWorkflow      @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  lineKey         String
+  rowNumber       Int?
+  productCode     String
+  productName     String
+  unit            String
+  requestedQty    Float
+  deliveredQty    Float                       @default(0)
+  remainingQty    Float
+  pickedQty       Float                       @default(0)
+  extraQty        Float                       @default(0)
+  shortageQty     Float                       @default(0)
+  unitPrice       Float                       @default(0)
+  vat             Float                       @default(0)
+  stockSnapshot   Float?
+  imageUrl        String?
+  shelfCode       String?
+  status          WarehouseWorkflowItemStatus @default(PENDING)
+  createdAt       DateTime                    @default(now())
+  updatedAt       DateTime                    @updatedAt
+
+  @@unique([workflowId, lineKey])
+  @@index([workflowId, status])
+  @@index([productCode])
+}
+
+model WarehouseShelfLocation {
+  id          String    @id @default(uuid())
+  productCode String    @unique
+  shelfCode   String
+  note        String?
+  updatedBy   String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([shelfCode])
+}
+
+model WarehouseDispatchDriver {
+  id         String   @id @default(uuid())
+  firstName  String
+  lastName   String
+  tcNo       String   @unique
+  active     Boolean  @default(true)
+  note       String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([active])
+  @@index([lastName, firstName])
+}
+
+model WarehouseDispatchVehicle {
+  id         String   @id @default(uuid())
+  name       String
+  plate      String   @unique
+  active     Boolean  @default(true)
+  note       String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([active])
+  @@index([name])
+}
+
+model WarehouseImageIssueReport {
+  id                String                    @id @default(uuid())
+  mikroOrderNumber  String
+  orderSeries       String?
+  customerCode      String?
+  customerName      String?
+  lineKey           String
+  rowNumber         Int?
+  productCode       String
+  productName       String
+  imageUrl          String?
+  note              String?
+  status            WarehouseImageIssueStatus @default(OPEN)
+  reporterUserId    String?
+  reporterName      String?
+  reviewedByUserId  String?
+  reviewedByName    String?
+  reviewNote        String?
+  reviewedAt        DateTime?
+  createdAt         DateTime                  @default(now())
+  updatedAt         DateTime                  @updatedAt
+
+  @@index([mikroOrderNumber])
+  @@index([lineKey])
+  @@index([productCode])
+  @@index([status])
+  @@index([createdAt])
 }
 
 // Email gönderim logları
@@ -681,3 +1740,146 @@ model ReportExclusion {
   @@index([active])
   @@index([value])
 }
+
+// ==================== TASKS ====================
+
+model Task {
+  id              String        @id @default(uuid())
+  title           String
+  description     String?
+  type            TaskType
+  status          TaskStatus    @default(NEW)
+  priority        TaskPriority  @default(NONE)
+  dueDate         DateTime?
+
+  createdById     String
+  createdBy       User          @relation("TaskCreator", fields: [createdById], references: [id])
+  assignedToId    String?
+  assignedTo      User?         @relation("TaskAssignee", fields: [assignedToId], references: [id])
+  customerId      String?
+  customer        User?         @relation("TaskCustomer", fields: [customerId], references: [id])
+  sectorCode      String?
+
+  templateId      String?
+  template        TaskTemplate? @relation(fields: [templateId], references: [id])
+
+  lastActivityAt  DateTime      @default(now())
+  completedAt     DateTime?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  comments        TaskComment[]
+  attachments     TaskAttachment[]
+  links           TaskLink[]
+  statusHistory   TaskStatusHistory[]
+
+  @@index([status])
+  @@index([priority])
+  @@index([type])
+  @@index([assignedToId])
+  @@index([createdById])
+  @@index([customerId])
+  @@index([sectorCode])
+  @@index([lastActivityAt])
+}
+
+model TaskComment {
+  id          String          @id @default(uuid())
+  taskId      String
+  task        Task            @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  authorId    String
+  author      User            @relation("TaskCommentAuthor", fields: [authorId], references: [id])
+  body        String
+  visibility  TaskVisibility  @default(PUBLIC)
+  createdAt   DateTime        @default(now())
+
+  @@index([taskId])
+  @@index([authorId])
+}
+
+model TaskAttachment {
+  id            String          @id @default(uuid())
+  taskId        String
+  task          Task            @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  uploadedById  String
+  uploadedBy    User            @relation("TaskAttachmentUploader", fields: [uploadedById], references: [id])
+  fileName      String
+  originalName  String
+  mimeType      String
+  size          Int
+  url           String
+  visibility    TaskVisibility  @default(PUBLIC)
+  createdAt     DateTime        @default(now())
+
+  @@index([taskId])
+  @@index([uploadedById])
+}
+
+model TaskLink {
+  id            String        @id @default(uuid())
+  taskId        String
+  task          Task          @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  type          TaskLinkType
+  label         String?
+  referenceId   String?
+  referenceCode String?
+  referenceUrl  String?
+  createdAt     DateTime      @default(now())
+
+  @@index([taskId])
+  @@index([type])
+}
+
+model TaskStatusHistory {
+  id            String       @id @default(uuid())
+  taskId        String
+  task          Task         @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  fromStatus    TaskStatus?
+  toStatus      TaskStatus
+  changedById   String?
+  changedBy     User?        @relation("TaskStatusChanger", fields: [changedById], references: [id])
+  createdAt     DateTime     @default(now())
+
+  @@index([taskId])
+  @@index([changedById])
+}
+
+model TaskTemplate {
+  id            String        @id @default(uuid())
+  title         String
+  description   String?
+  type          TaskType
+  priority      TaskPriority  @default(NONE)
+  defaultStatus TaskStatus    @default(NEW)
+  checklist     Json?
+  isActive      Boolean       @default(true)
+
+  createdById   String?
+  createdBy     User?         @relation("TaskTemplateCreator", fields: [createdById], references: [id])
+  tasks         Task[]
+
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+}
+
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title     String
+  body      String?
+  linkUrl   String?
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([userId, isRead])
+  @@index([createdAt])
+}
+
+
+
+
+
+
+
+

@@ -1,14 +1,15 @@
 'use client';
 
-import { useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { Suspense, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useAuthStore } from '@/lib/store/authStore';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { validateField, validators } from '@/lib/utils/validation';
 
-export default function LoginPage() {
+const LoginForm = () => {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { login, isLoading, error } = useAuthStore();
 
   const [email, setEmail] = useState('');
@@ -35,13 +36,21 @@ export default function LoginPage() {
 
       // Store'dan user bilgisini al ve yönlendir
       const user = useAuthStore.getState().user;
+      const redirectParam = searchParams.get('redirect');
+      const safeRedirect = redirectParam && redirectParam.startsWith('/') ? redirectParam : null;
 
       if (user?.role === 'HEAD_ADMIN' || user?.role === 'ADMIN' || user?.role === 'MANAGER' || user?.role === 'SALES_REP') {
         router.push('/dashboard');
+      } else if (user?.role === 'DEPOCU') {
+        router.push('/warehouse');
       } else if (user?.role === 'DIVERSEY') {
         router.push('/diversey/stok');
       } else {
-        router.push('/products');
+        if (safeRedirect) {
+          router.push(safeRedirect);
+        } else {
+          router.push('/products');
+        }
       }
     } catch (err) {
       // Hata authStore'da handle edildi
@@ -129,5 +138,19 @@ export default function LoginPage() {
         </div>
       </div>
     </div>
+  );
+};
+
+export default function LoginPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-primary-600 via-primary-700 to-primary-800">
+          <div className="text-white text-sm">Loading...</div>
+        </div>
+      }
+    >
+      <LoginForm />
+    </Suspense>
   );
 }

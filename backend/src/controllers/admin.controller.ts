@@ -3,18 +3,26 @@
  */
 
 import { Request, Response, NextFunction } from 'express';
+import https from 'https';
+import crypto from 'crypto';
 import { prisma } from '../utils/prisma';
+import path from 'path';
 import { hashPassword } from '../utils/password';
 import syncService from '../services/sync.service';
+import imageService from '../services/image.service';
 import cariSyncService from '../services/cariSync.service';
 import orderService from '../services/order.service';
 import pricingService from '../services/pricing.service';
 import mikroService from '../services/mikroFactory.service';
 import reportsService from '../services/reports.service';
+import emailService from '../services/email.service';
 import priceSyncService from '../services/priceSync.service';
 import priceHistoryNewService from '../services/priceHistoryNew.service';
 import exclusionService from '../services/exclusion.service';
 import priceListService from '../services/price-list.service';
+import productComplementService from '../services/product-complement.service';
+import MIKRO_TABLES from '../config/mikro-tables';
+import { splitSearchTokens } from '../utils/search';
 import { CreateCustomerRequest, SetCategoryPriceRuleRequest } from '../types';
 
 const DEFAULT_CUSTOMER_PRICE_LISTS = {
@@ -22,6 +30,235 @@ const DEFAULT_CUSTOMER_PRICE_LISTS = {
   PERAKENDE: { invoiced: 6, white: 1 },
   VIP: { invoiced: 6, white: 1 },
   OZEL: { invoiced: 6, white: 1 },
+};
+
+const PRODUCT_SELECT = {
+  id: true,
+  name: true,
+  mikroCode: true,
+  unit: true,
+  unit2: true,
+  unit2Factor: true,
+  excessStock: true,
+  warehouseStocks: true,
+  pendingCustomerOrdersByWarehouse: true,
+  warehouseExcessStocks: true,
+  lastEntryPrice: true,
+  lastEntryDate: true,
+  currentCost: true,
+  currentCostDate: true,
+  calculatedCost: true,
+  vatRate: true,
+  prices: true,
+  imageUrl: true,
+  category: {
+    select: {
+      id: true,
+      name: true,
+    },
+  },
+};
+
+const buildProductsWithPriceLists = async (products: any[]) => {
+  if (!products || products.length === 0) return [];
+
+  const settings = await prisma.settings.findFirst();
+  const includedWarehouses = settings?.includedWarehouses || [];
+
+  const productsWithTotalStock = products.map((product) => {
+    const warehouseStocks = (product.warehouseStocks as Record<string, number>) || {};
+    const pendingByWarehouse =
+      (product as any).pendingCustomerOrdersByWarehouse as Record<string, number> || {};
+    const availableWarehouseStocks = applyPendingOrdersToStocks(warehouseStocks, pendingByWarehouse);
+    const totalStock = includedWarehouses.reduce((sum, warehouse) => {
+      return sum + (availableWarehouseStocks[warehouse] || 0);
+    }, 0);
+
+    return {
+      ...product,
+      warehouseStocks: availableWarehouseStocks,
+      totalStock,
+    };
+  });
+
+  const priceStatsMap = await priceListService.getPriceStatsMap(
+    productsWithTotalStock.map((product) => product.mikroCode)
+  );
+
+  return productsWithTotalStock.map((product) => {
+    const priceStats = priceStatsMap.get(product.mikroCode) || null;
+    const mikroPriceLists: Record<string, number> = {};
+
+    for (let listNo = 1; listNo <= 10; listNo += 1) {
+      mikroPriceLists[listNo] = priceListService.getListPrice(priceStats, listNo);
+    }
+
+    return {
+      ...product,
+      mikroPriceLists,
+    };
+  });
+};
+
+const buildSubUserBase = (mikroCariCode: string | null | undefined, fallbackId: string): string => {
+  const trimmed = typeof mikroCariCode === 'string' ? mikroCariCode.trim() : '';
+  if (trimmed) return trimmed;
+  return `SUB-${fallbackId.slice(0, 6)}`;
+};
+
+const buildSubUserPassword = (length = 10): string => {
+  const safeLength = Math.max(6, length);
+  const raw = crypto.randomBytes(safeLength * 2).toString('base64');
+  const cleaned = raw.replace(/[^a-zA-Z0-9]/g, '').slice(0, safeLength);
+  if (cleaned.length >= 6) return cleaned;
+  return `${Date.now().toString(36)}Abc123`;
+};
+
+
+const parseReportDateInput = (value: unknown): Date | null => {
+  if (!value || typeof value !== 'string') return null;
+  const cleaned = value.replace(/-/g, '');
+  if (!/^\d{8}$/.test(cleaned)) return null;
+  const year = Number(cleaned.slice(0, 4));
+  const month = Number(cleaned.slice(4, 6));
+  const day = Number(cleaned.slice(6, 8));
+  if (!year || !month || !day) return null;
+  return new Date(Date.UTC(year, month - 1, day));
+};
+
+type DashboardPeriod = 'daily' | 'weekly' | 'monthly' | 'custom';
+
+const parseDashboardDate = (value: unknown): Date | null => {
+  if (!value || typeof value !== 'string') return null;
+  const cleaned = value.trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(cleaned)) return null;
+  const parsed = new Date(`${cleaned}T00:00:00`);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed;
+};
+
+const getDashboardPeriod = (value: unknown): DashboardPeriod => {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'weekly') return 'weekly';
+  if (normalized === 'monthly') return 'monthly';
+  if (normalized === 'custom') return 'custom';
+  return 'daily';
+};
+
+const getPeriodRange = (
+  period: DashboardPeriod,
+  customStartDate?: unknown,
+  customEndDate?: unknown
+) => {
+  const now = new Date();
+  const start = new Date(now);
+  let resolvedPeriod: DashboardPeriod = period;
+
+  if (period === 'custom') {
+    const parsedStart = parseDashboardDate(customStartDate);
+    const parsedEnd = parseDashboardDate(customEndDate);
+    if (parsedStart && parsedEnd && parsedStart <= parsedEnd) {
+      parsedStart.setHours(0, 0, 0, 0);
+      parsedEnd.setHours(23, 59, 59, 999);
+      return { start: parsedStart, end: parsedEnd, resolvedPeriod };
+    }
+    resolvedPeriod = 'daily';
+  }
+
+  if (resolvedPeriod === 'weekly') {
+    // Monday-start week for TR business reporting.
+    const day = start.getDay();
+    const diffToMonday = day === 0 ? 6 : day - 1;
+    start.setDate(start.getDate() - diffToMonday);
+  } else if (resolvedPeriod === 'monthly') {
+    start.setDate(1);
+  }
+
+  start.setHours(0, 0, 0, 0);
+  return { start, end: now, resolvedPeriod };
+};
+
+const toIsoDate = (value: Date) => {
+  const y = value.getFullYear();
+  const m = String(value.getMonth() + 1).padStart(2, '0');
+  const d = String(value.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+};
+
+const escapeSqlString = (value: string) => String(value || '').replace(/'/g, "''");
+
+const applyPendingOrdersToStocks = (
+  warehouseStocks: Record<string, number>,
+  pendingByWarehouse: Record<string, number>
+): Record<string, number> => {
+  const result: Record<string, number> = {};
+  Object.entries(warehouseStocks || {}).forEach(([warehouse, qty]) => {
+    const pending = Number(pendingByWarehouse?.[warehouse]) || 0;
+    const available = Math.max(0, (Number(qty) || 0) - pending);
+    result[warehouse] = available;
+  });
+  return result;
+};
+
+
+const TCMB_URL = 'https://www.tcmb.gov.tr/kurlar/today.xml';
+const USD_RATE_TTL_MS = 60 * 60 * 1000;
+let usdRateCache: { rate: number; fetchedAt: number } | null = null;
+
+const fetchTcmbXml = () =>
+  new Promise<string>((resolve, reject) => {
+    const request = https.get(TCMB_URL, (response) => {
+      if (response.statusCode && response.statusCode >= 400) {
+        response.resume();
+        reject(new Error(`TCMB request failed with status ${response.statusCode}`));
+        return;
+      }
+
+      response.setEncoding('utf8');
+      let data = '';
+      response.on('data', (chunk) => {
+        data += chunk;
+      });
+      response.on('end', () => resolve(data));
+    });
+
+    request.on('error', reject);
+  });
+
+const parseUsdSellingRate = (xml: string) => {
+  const currencyMatch = xml.match(/<Currency[^>]*CurrencyCode="USD"[^>]*>([\s\S]*?)<\/Currency>/);
+  if (!currencyMatch) return null;
+  const currencyBlock = currencyMatch[1];
+  const sellingMatch =
+    currencyBlock.match(/<ForexSelling>([^<]+)<\/ForexSelling>/) ||
+    currencyBlock.match(/<BanknoteSelling>([^<]+)<\/BanknoteSelling>/);
+  if (!sellingMatch) return null;
+  const raw = sellingMatch[1].trim().replace(',', '.');
+  const rate = Number(raw);
+  return Number.isFinite(rate) ? rate : null;
+};
+
+const fetchUsdSellingRate = async () => {
+  const now = Date.now();
+  if (usdRateCache && now - usdRateCache.fetchedAt < USD_RATE_TTL_MS) {
+    return {
+      rate: usdRateCache.rate,
+      fetchedAt: new Date(usdRateCache.fetchedAt).toISOString(),
+    };
+  }
+
+  const xml = await fetchTcmbXml();
+  const rate = parseUsdSellingRate(xml);
+  if (!rate) {
+    throw new Error('USD selling rate not found');
+  }
+
+  usdRateCache = { rate, fetchedAt: now };
+
+  return {
+    rate,
+    fetchedAt: new Date(now).toISOString(),
+  };
 };
 
 export class AdminController {
@@ -111,6 +348,29 @@ export class AdminController {
 
       res.json({
         message: 'Image sync started',
+        syncLogId,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * POST /api/admin/products/image-sync
+   * Start image sync for selected products
+   */
+  async triggerSelectedImageSync(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { productIds } = req.body as { productIds?: string[] };
+
+      if (!Array.isArray(productIds) || productIds.length === 0) {
+        return res.status(400).json({ error: 'Product IDs are required' });
+      }
+
+      const syncLogId = await syncService.startImageSyncForProducts(productIds);
+
+      res.json({
+        message: 'Selected image sync started',
         syncLogId,
       });
     } catch (error) {
@@ -249,22 +509,29 @@ export class AdminController {
       const {
         search,
         hasImage,
+        imageSyncStatus,
+        imageSyncErrorType,
         categoryId,
         priceListStatus = 'all',
         sortBy = 'name',
         sortOrder = 'asc',
         page = '1',
-        limit = '10000' // Increased for Diversey users to see all products
+        limit = '10000', // Increased for Diversey users to see all products
+        hasStock,
+        brand,
       } = req.query;
 
       const where: any = { active: true };
 
       // Arama filtresi
-      if (search) {
-        where.OR = [
-          { name: { contains: search as string, mode: 'insensitive' } },
-          { mikroCode: { contains: search as string, mode: 'insensitive' } },
-        ];
+      const searchTokens = splitSearchTokens(search as string | undefined);
+      if (searchTokens.length > 0) {
+        where.AND = searchTokens.map((token) => ({
+          OR: [
+            { name: { contains: token, mode: 'insensitive' } },
+            { mikroCode: { contains: token, mode: 'insensitive' } },
+          ],
+        }));
       }
 
       // Resim filtresi
@@ -272,6 +539,14 @@ export class AdminController {
         where.imageUrl = { not: null };
       } else if (hasImage === 'false') {
         where.imageUrl = null;
+      }
+
+      if (imageSyncStatus && imageSyncStatus !== 'all') {
+        where.imageSyncStatus = imageSyncStatus as string;
+      }
+
+      if (imageSyncErrorType && imageSyncErrorType !== 'all') {
+        where.imageSyncErrorType = imageSyncErrorType as string;
       }
 
       // Kategori filtresi
@@ -307,26 +582,58 @@ export class AdminController {
         }
       }
 
-      // Sıralama ayarları
+      // Marka filtresi
+      const brandValue = typeof brand === 'string' ? brand.trim() : '';
+      if (brandValue) {
+        const brandRows = await prisma.$queryRaw<{ product_code: string }[]>`
+          SELECT DISTINCT product_code
+          FROM product_price_stats
+          WHERE brand ILIKE ${`%${brandValue}%`}
+        `;
+        const brandCodes = brandRows.map((row) => row.product_code);
+
+        if (brandCodes.length === 0) {
+          where.mikroCode = { in: ['__none__'] };
+        } else if (where.mikroCode) {
+          const existing = where.mikroCode as { in?: string[]; notIn?: string[] };
+          if (existing.in) {
+            const brandSet = new Set(brandCodes);
+            const filtered = existing.in.filter((code) => brandSet.has(code));
+            existing.in = filtered.length > 0 ? filtered : ['__none__'];
+          } else {
+            existing.in = brandCodes;
+          }
+          where.mikroCode = existing;
+        } else {
+          where.mikroCode = { in: brandCodes };
+        }
+      }
+      // Siralama ayarlari
       const orderBy: any = {};
-      const validSortFields = ['name', 'mikroCode', 'excessStock', 'lastEntryDate', 'currentCost'];
-      if (validSortFields.includes(sortBy as string)) {
-        orderBy[sortBy as string] = sortOrder === 'desc' ? 'desc' : 'asc';
-      } else {
+      const sortByValue = String(sortBy || '');
+      const sortByTotalStock = sortByValue === 'totalStock';
+      const validSortFields = [
+        'name',
+        'mikroCode',
+        'excessStock',
+        'lastEntryDate',
+        'currentCost',
+        'imageSyncErrorType',
+        'imageSyncUpdatedAt',
+      ];
+      if (validSortFields.includes(sortByValue)) {
+        orderBy[sortByValue] = sortOrder === 'desc' ? 'desc' : 'asc';
+      } else if (!sortByTotalStock) {
         orderBy.name = 'asc'; // default
       }
 
+      const orderByClause = Object.keys(orderBy).length ? orderBy : undefined;
       // Pagination
       const pageNum = parseInt(page as string, 10);
       const limitNum = parseInt(limit as string, 10);
       const skip = (pageNum - 1) * limitNum;
-
-      // Get total count and stats for current filter
-      const [totalCount, withImageCount, withoutImageCount] = await Promise.all([
-        prisma.product.count({ where }),
-        prisma.product.count({ where: { ...where, imageUrl: { not: null } } }),
-        prisma.product.count({ where: { ...where, imageUrl: null } }),
-      ]);
+      const filterByStock = hasStock === 'true' || hasStock === 'false';
+      const paginateInMemory = filterByStock || sortByTotalStock;
 
       const products = await prisma.product.findMany({
         where,
@@ -335,8 +642,11 @@ export class AdminController {
           name: true,
           mikroCode: true,
           unit: true,
+          unit2: true,
+          unit2Factor: true,
           excessStock: true,
           warehouseStocks: true,
+          pendingCustomerOrdersByWarehouse: true,
           warehouseExcessStocks: true,
           lastEntryPrice: true,
           lastEntryDate: true,
@@ -346,6 +656,11 @@ export class AdminController {
           vatRate: true,
           prices: true,
           imageUrl: true,
+          imageChecksum: true,
+          imageSyncStatus: true,
+          imageSyncErrorType: true,
+          imageSyncErrorMessage: true,
+          imageSyncUpdatedAt: true,
           category: {
             select: {
               id: true,
@@ -353,14 +668,9 @@ export class AdminController {
             },
           },
         },
-        orderBy,
-        skip,
-        take: limitNum,
+        ...(orderByClause ? { orderBy: orderByClause } : {}),
+        ...(paginateInMemory ? {} : { skip, take: limitNum }),
       });
-
-      const priceStatsMap = await priceListService.getPriceStatsMap(
-        products.map((product) => product.mikroCode)
-      );
 
       // Settings'den aktif depolar?? al
       const settings = await prisma.settings.findFirst();
@@ -369,10 +679,61 @@ export class AdminController {
       // Toplam stok hesapla (sadece included warehouses)
       const productsWithTotalStock = products.map(product => {
         const warehouseStocks = product.warehouseStocks as Record<string, number> || {};
+        const pendingByWarehouse = (product as any).pendingCustomerOrdersByWarehouse as Record<string, number> || {};
+        const availableWarehouseStocks = applyPendingOrdersToStocks(warehouseStocks, pendingByWarehouse);
         const totalStock = includedWarehouses.reduce((sum, warehouse) => {
-          return sum + (warehouseStocks[warehouse] || 0);
+          return sum + (availableWarehouseStocks[warehouse] || 0);
         }, 0);
 
+        return {
+          ...product,
+          warehouseStocks: availableWarehouseStocks,
+          totalStock,
+        };
+      });
+
+      let filteredProducts = productsWithTotalStock;
+      let totalCount = 0;
+      let withImageCount = 0;
+      let withoutImageCount = 0;
+
+      if (filterByStock) {
+        filteredProducts = productsWithTotalStock.filter((product) => {
+          const inStock = (product.totalStock || 0) > 0;
+          return hasStock === 'true' ? inStock : !inStock;
+        });
+      }
+
+      if (sortByTotalStock) {
+        const direction = sortOrder === 'desc' ? -1 : 1;
+        filteredProducts.sort((a, b) => {
+          const diff = (a.totalStock - b.totalStock) * direction;
+          if (diff !== 0) return diff;
+          return a.name.localeCompare(b.name, 'tr');
+        });
+      }
+
+      if (paginateInMemory) {
+        totalCount = filteredProducts.length;
+        withImageCount = filteredProducts.filter((product) => product.imageUrl).length;
+        withoutImageCount = totalCount - withImageCount;
+      } else {
+        [totalCount, withImageCount, withoutImageCount] = await Promise.all([
+          prisma.product.count({ where }),
+          prisma.product.count({ where: { ...where, imageUrl: { not: null } } }),
+          prisma.product.count({ where: { ...where, imageUrl: null } }),
+        ]);
+      }
+
+      const pagedProducts = paginateInMemory
+        ? filteredProducts.slice(skip, skip + limitNum)
+        : productsWithTotalStock;
+
+      const priceStatsMap = await priceListService.getPriceStatsMap(
+        pagedProducts.map((product) => product.mikroCode)
+      );
+
+      const productsWithPriceLists = pagedProducts.map((product) => {
         const priceStats = priceStatsMap.get(product.mikroCode) || null;
         const mikroPriceLists: Record<string, number> = {};
 
@@ -382,13 +743,12 @@ export class AdminController {
 
         return {
           ...product,
-          totalStock,
           mikroPriceLists,
         };
       });
 
       res.json({
-        products: productsWithTotalStock,
+        products: productsWithPriceLists,
         pagination: {
           page: pageNum,
           limit: limitNum,
@@ -407,6 +767,236 @@ export class AdminController {
   }
 
   /**
+   * POST /api/admin/products/by-codes
+   * Kod listesine gore urunleri getirir.
+   */
+  async getProductsByCodes(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { codes } = req.body as { codes?: string[] };
+      const normalizedCodes = Array.from(
+        new Set((codes || []).map((code) => String(code || '').trim()).filter(Boolean))
+      );
+
+      if (normalizedCodes.length === 0) {
+        res.json({ products: [], total: 0 });
+        return;
+      }
+
+      const products = await prisma.product.findMany({
+        where: { mikroCode: { in: normalizedCodes } },
+        select: PRODUCT_SELECT,
+      });
+
+      const productsWithPriceLists = await buildProductsWithPriceLists(products);
+      const inClause = normalizedCodes.map((code) => `'${code.replace(/'/g, "''")}'`).join(',');
+      const normalizeColumnName = (value: unknown) =>
+        String(value || '')
+          .trim()
+          .toLowerCase();
+      const sanitizeSqlIdentifier = (value: string) =>
+        String(value || '').replace(/[^a-z0-9_]/gi, '');
+      const vatColumnCandidates = Array.from(
+        new Set(
+          [
+            normalizeColumnName(MIKRO_TABLES.PRODUCTS_COLUMNS.VAT_RATE),
+            'sto_toptan_vergi',
+            'sto_perakende_vergi',
+            'sto_oivvergipntr',
+          ].filter(Boolean)
+        )
+      );
+      const costColumnCandidates = Array.from(
+        new Set(
+          [
+            normalizeColumnName(MIKRO_TABLES.PRODUCTS_COLUMNS.CURRENT_COST),
+            'sto_standartmaliyet',
+          ].filter(Boolean)
+        )
+      );
+      const columnCandidates = Array.from(new Set([...vatColumnCandidates, ...costColumnCandidates]));
+
+      let availableColumns = new Set<string>();
+      try {
+        if (columnCandidates.length > 0) {
+          const columnInClause = columnCandidates.map((column) => `'${escapeSqlString(column)}'`).join(',');
+          const columnRows = await mikroService.executeQuery(`
+            SELECT LOWER(COLUMN_NAME) AS columnName
+            FROM INFORMATION_SCHEMA.COLUMNS
+            WHERE TABLE_NAME = 'STOKLAR'
+              AND LOWER(COLUMN_NAME) IN (${columnInClause})
+          `);
+          availableColumns = new Set(
+            (columnRows || [])
+              .map((row: any) => normalizeColumnName(row?.columnName))
+              .filter(Boolean)
+          );
+        }
+      } catch {
+        availableColumns = new Set<string>();
+      }
+
+      const probeFirstExistingColumn = async (candidates: string[]): Promise<string | null> => {
+        for (const candidate of candidates) {
+          const safeCandidate = sanitizeSqlIdentifier(candidate);
+          if (!safeCandidate) continue;
+          try {
+            await mikroService.executeQuery(`
+              SELECT TOP 1 ISNULL(s.[${safeCandidate}], 0) AS probeValue
+              FROM STOKLAR s
+              WHERE s.sto_kod IN (${inClause})
+            `);
+            return safeCandidate;
+          } catch (error: any) {
+            const message = String(error?.message || '').toLowerCase();
+            if (!message.includes('invalid column name')) {
+              throw error;
+            }
+          }
+        }
+        return null;
+      };
+
+      const selectedVatColumnRaw =
+        vatColumnCandidates.find((column) => availableColumns.has(column)) || null;
+      const selectedCostColumnRaw =
+        costColumnCandidates.find((column) => availableColumns.has(column)) || null;
+      let selectedVatColumn = selectedVatColumnRaw ? sanitizeSqlIdentifier(selectedVatColumnRaw) : null;
+      let selectedCostColumn = selectedCostColumnRaw ? sanitizeSqlIdentifier(selectedCostColumnRaw) : null;
+      if (!selectedVatColumn) {
+        selectedVatColumn = await probeFirstExistingColumn(vatColumnCandidates);
+      }
+      if (!selectedCostColumn) {
+        selectedCostColumn = await probeFirstExistingColumn(costColumnCandidates);
+      }
+      const supplierBaseQuery = `
+        SELECT
+          s.sto_kod AS productCode,
+          ${selectedVatColumn ? `ISNULL(s.[${selectedVatColumn}], 0)` : 'NULL'} AS vatCode,
+          ${selectedCostColumn ? `ISNULL(s.[${selectedCostColumn}], 0)` : 'NULL'} AS mikroCurrentCost,
+          LTRIM(RTRIM(ISNULL(s.sto_sat_cari_kod, ''))) AS mainSupplierCode,
+          LTRIM(RTRIM(ISNULL(c.cari_unvan1, ''))) AS mainSupplierName
+        FROM STOKLAR s
+        LEFT JOIN CARI_HESAPLAR c
+          ON c.cari_kod = LTRIM(RTRIM(ISNULL(s.sto_sat_cari_kod, '')))
+        WHERE s.sto_kod IN (${inClause})
+      `;
+      const supplierFallbackQuery = `
+        SELECT
+          s.sto_kod AS productCode,
+          NULL AS vatCode,
+          NULL AS mikroCurrentCost,
+          LTRIM(RTRIM(ISNULL(s.sto_sat_cari_kod, ''))) AS mainSupplierCode,
+          LTRIM(RTRIM(ISNULL(c.cari_unvan1, ''))) AS mainSupplierName
+        FROM STOKLAR s
+        LEFT JOIN CARI_HESAPLAR c
+          ON c.cari_kod = LTRIM(RTRIM(ISNULL(s.sto_sat_cari_kod, '')))
+        WHERE s.sto_kod IN (${inClause})
+      `;
+
+      let supplierRows: any[] = [];
+      try {
+        supplierRows = await mikroService.executeQuery(supplierBaseQuery);
+      } catch (error: any) {
+        const message = String(error?.message || '').toLowerCase();
+        if (!message.includes('invalid column name')) {
+          throw error;
+        }
+        // Kolon adlari farkliysa ana akis bozulmasin, tedarikci bilgileriyle devam et.
+        supplierRows = await mikroService.executeQuery(supplierFallbackQuery);
+      }
+      const supplierByCode = new Map<
+        string,
+        { code: string | null; name: string | null; vatCode: number; mikroCurrentCost: number | null }
+      >();
+      (supplierRows || []).forEach((row: any) => {
+        const productCode = String(row?.productCode || '').trim().toUpperCase();
+        if (!productCode) return;
+        const mainSupplierCode = String(row?.mainSupplierCode || '').trim() || null;
+        const mainSupplierName = String(row?.mainSupplierName || '').trim() || null;
+        const vatCode = Number(row?.vatCode ?? 0);
+        const mikroCurrentCostRaw = Number(row?.mikroCurrentCost);
+        const mikroCurrentCost = Number.isFinite(mikroCurrentCostRaw) ? mikroCurrentCostRaw : null;
+        supplierByCode.set(productCode, {
+          code: mainSupplierCode,
+          name: mainSupplierName,
+          vatCode: Number.isFinite(vatCode) ? vatCode : 0,
+          mikroCurrentCost,
+        });
+      });
+
+      const productsByCode = new Map<string, any>();
+      productsWithPriceLists.forEach((product: any) => {
+        const code = String(product?.mikroCode || '').trim().toUpperCase();
+        if (code) productsByCode.set(code, product);
+      });
+
+      const enrichedProducts = normalizedCodes.map((requestedCode) => {
+        const normalizedCode = String(requestedCode || '').trim().toUpperCase();
+        const product = productsByCode.get(normalizedCode);
+        const supplier = supplierByCode.get(normalizedCode);
+        const currentVatRate = Number(product?.vatRate ?? 0);
+        const fallbackVatRate = Number(
+          mikroService.convertVatCodeToRate(Number(supplier?.vatCode ?? 0))
+        );
+        const currentCost = Number(product?.currentCost);
+        const fallbackCurrentCost = Number(supplier?.mikroCurrentCost);
+        const resolvedVatRate =
+          Number.isFinite(currentVatRate) && currentVatRate > 0
+            ? currentVatRate
+            : Number.isFinite(fallbackVatRate)
+            ? fallbackVatRate
+            : 0;
+        const resolvedCurrentCost =
+          Number.isFinite(currentCost) && currentCost > 0
+            ? currentCost
+            : Number.isFinite(fallbackCurrentCost) && fallbackCurrentCost > 0
+            ? fallbackCurrentCost
+            : Number.isFinite(currentCost)
+            ? currentCost
+            : null;
+
+        const baseProduct =
+          product ||
+          ({
+            id: null,
+            name: normalizedCode,
+            mikroCode: normalizedCode,
+            unit: null,
+            unit2: null,
+            unit2Factor: null,
+            excessStock: 0,
+            warehouseStocks: {},
+            pendingCustomerOrdersByWarehouse: {},
+            warehouseExcessStocks: {},
+            totalStock: 0,
+            lastEntryPrice: null,
+            lastEntryDate: null,
+            currentCost: null,
+            currentCostDate: null,
+            calculatedCost: null,
+            vatRate: 0,
+            prices: {},
+            imageUrl: null,
+            category: null,
+            mikroPriceLists: {},
+          } as any);
+
+        return {
+          ...baseProduct,
+          mikroCode: normalizedCode,
+          currentCost: resolvedCurrentCost,
+          vatRate: resolvedVatRate,
+          mainSupplierCode: supplier?.code || null,
+          mainSupplierName: supplier?.name || null,
+        };
+      });
+      res.json({ products: enrichedProducts, total: enrichedProducts.length });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
    * GET /api/admin/customers
    * ADMIN/MANAGER: Tüm müşteriler
    * SALES_REP: Sadece atanan sektör kodlarındaki müşteriler
@@ -417,7 +1007,7 @@ export class AdminController {
       const assignedSectorCodes = req.user?.assignedSectorCodes || [];
 
       // Base where clause
-      const where: any = { role: 'CUSTOMER' };
+      const where: any = { role: 'CUSTOMER', parentCustomerId: null };
 
       // SALES_REP ise sektör filtresi uygula
       if (userRole === 'SALES_REP') {
@@ -432,9 +1022,16 @@ export class AdminController {
           name: true,
           customerType: true,
           mikroCariCode: true,
-          invoicedPriceListNo: true,
-          whitePriceListNo: true,
-          active: true,
+            invoicedPriceListNo: true,
+            whitePriceListNo: true,
+            priceVisibility: true,
+            useLastPrices: true,
+            lastPriceGuardType: true,
+            lastPriceGuardInvoicedListNo: true,
+            lastPriceGuardWhiteListNo: true,
+            lastPriceCostBasis: true,
+            lastPriceMinCostPercent: true,
+            active: true,
           createdAt: true,
           // Mikro ERP fields
           city: true,
@@ -443,6 +1040,9 @@ export class AdminController {
           groupCode: true,
           sectorCode: true,
           paymentTerm: true,
+          paymentPlanNo: true,
+          paymentPlanCode: true,
+          paymentPlanName: true,
           hasEInvoice: true,
           balance: true,
           isLocked: true,
@@ -463,16 +1063,31 @@ export class AdminController {
    */
   async createCustomer(req: Request, res: Response, next: NextFunction) {
     try {
-      const { email, password, name, customerType, mikroCariCode, invoicedPriceListNo, whitePriceListNo } =
+      const { email, password, name, customerType, mikroCariCode, invoicedPriceListNo, whitePriceListNo, priceVisibility } =
         req.body as CreateCustomerRequest;
+      const normalizedEmail = typeof email === 'string' ? email.trim() : '';
+      const emailValue = normalizedEmail || null;
+      const userRole = req.user?.role;
+      const assignedSectorCodes = req.user?.assignedSectorCodes || [];
+      const isSalesRep = userRole === 'SALES_REP';
+
+      if (isSalesRep && assignedSectorCodes.length === 0) {
+        return res.status(403).json({ error: 'No assigned sector codes' });
+      }
+
+      if (isSalesRep && !mikroCariCode) {
+        return res.status(400).json({ error: 'Mikro cari code is required' });
+      }
 
       // Email kontrolü
-      const existingUser = await prisma.user.findUnique({
-        where: { email },
-      });
+      if (emailValue) {
+        const existingUser = await prisma.user.findUnique({
+          where: { email: emailValue },
+        });
 
-      if (existingUser) {
-        return res.status(400).json({ error: 'Email already exists' });
+        if (existingUser) {
+          return res.status(400).json({ error: 'Email already exists' });
+        }
       }
 
       // Mikro cari kodu kontrolü
@@ -495,6 +1110,16 @@ export class AdminController {
         try {
           const cariList = await mikroService.getCariDetails();
           const cari = cariList.find(c => c.code === mikroCariCode);
+
+          if (isSalesRep) {
+            if (!cari) {
+              return res.status(400).json({ error: 'Mikro cari not found' });
+            }
+            if (!cari.sectorCode || !assignedSectorCodes.includes(cari.sectorCode)) {
+              return res.status(403).json({ error: 'You can only create customers from your assigned sectors' });
+            }
+          }
+
           if (cari) {
             mikroCariData = {
               city: cari.city,
@@ -503,6 +1128,9 @@ export class AdminController {
               groupCode: cari.groupCode,
               sectorCode: cari.sectorCode,
               paymentTerm: cari.paymentTerm,
+              paymentPlanNo: cari.paymentPlanNo ?? null,
+              paymentPlanCode: cari.paymentPlanCode ?? null,
+              paymentPlanName: cari.paymentPlanName ?? null,
               hasEInvoice: cari.hasEInvoice,
               balance: cari.balance,
               isLocked: cari.isLocked,
@@ -517,11 +1145,12 @@ export class AdminController {
       // Kullanıcı oluştur
       const user = await prisma.user.create({
         data: {
-          email,
+          email: emailValue,
           password: hashedPassword,
           name,
           role: 'CUSTOMER',
           customerType,
+          priceVisibility: priceVisibility || undefined,
           mikroCariCode,
           invoicedPriceListNo: invoicedPriceListNo ?? undefined,
           whitePriceListNo: whitePriceListNo ?? undefined,
@@ -541,6 +1170,9 @@ export class AdminController {
           groupCode: true,
           sectorCode: true,
           paymentTerm: true,
+          paymentPlanNo: true,
+          paymentPlanCode: true,
+          paymentPlanName: true,
           hasEInvoice: true,
           balance: true,
           isLocked: true,
@@ -563,14 +1195,29 @@ export class AdminController {
     }
   }
 
-  /**
-   * PUT /api/admin/customers/:id
-   * Update customer (only editable fields: email, customerType, active)
-   */
-  async updateCustomer(req: Request, res: Response, next: NextFunction) {
+    /**
+     * PUT /api/admin/customers/:id
+     * Update customer (only editable fields: email, customerType, active)
+     */
+    async updateCustomer(req: Request, res: Response, next: NextFunction) {
     try {
       const { id } = req.params;
-      const { email, customerType, active, invoicedPriceListNo, whitePriceListNo } = req.body;
+      const {
+        email,
+        customerType,
+        active,
+        invoicedPriceListNo,
+        whitePriceListNo,
+        priceVisibility,
+        useLastPrices,
+        lastPriceGuardType,
+        lastPriceGuardInvoicedListNo,
+        lastPriceGuardWhiteListNo,
+        lastPriceCostBasis,
+        lastPriceMinCostPercent,
+      } = req.body;
+      const normalizedEmail = typeof email === 'string' ? email.trim() : email;
+      const emailValue = normalizedEmail === '' ? null : normalizedEmail;
 
       // Validate customer exists
       const existingCustomer = await prisma.user.findUnique({
@@ -586,9 +1233,9 @@ export class AdminController {
       }
 
       // Email değişiyorsa başka kullanıcıda var mı kontrol et
-      if (email && email !== existingCustomer.email) {
+      if (emailValue && emailValue !== existingCustomer.email) {
         const emailTaken = await prisma.user.findUnique({
-          where: { email },
+          where: { email: emailValue as string },
         });
 
         if (emailTaken) {
@@ -598,11 +1245,18 @@ export class AdminController {
 
       // Update only editable fields (NOT Mikro fields)
       const updateData: any = {};
-      if (email !== undefined) updateData.email = email;
+      if (email !== undefined) updateData.email = emailValue;
       if (customerType !== undefined) updateData.customerType = customerType;
       if (active !== undefined) updateData.active = active;
       if (invoicedPriceListNo !== undefined) updateData.invoicedPriceListNo = invoicedPriceListNo;
       if (whitePriceListNo !== undefined) updateData.whitePriceListNo = whitePriceListNo;
+      if (priceVisibility !== undefined) updateData.priceVisibility = priceVisibility;
+      if (useLastPrices !== undefined) updateData.useLastPrices = useLastPrices;
+      if (lastPriceGuardType !== undefined) updateData.lastPriceGuardType = lastPriceGuardType;
+      if (lastPriceGuardInvoicedListNo !== undefined) updateData.lastPriceGuardInvoicedListNo = lastPriceGuardInvoicedListNo;
+      if (lastPriceGuardWhiteListNo !== undefined) updateData.lastPriceGuardWhiteListNo = lastPriceGuardWhiteListNo;
+      if (lastPriceCostBasis !== undefined) updateData.lastPriceCostBasis = lastPriceCostBasis;
+      if (lastPriceMinCostPercent !== undefined) updateData.lastPriceMinCostPercent = lastPriceMinCostPercent;
 
       const updatedCustomer = await prisma.user.update({
         where: { id },
@@ -615,24 +1269,613 @@ export class AdminController {
           mikroName: true,
           customerType: true,
           mikroCariCode: true,
-          invoicedPriceListNo: true,
-          whitePriceListNo: true,
-          active: true,
+            invoicedPriceListNo: true,
+            whitePriceListNo: true,
+            priceVisibility: true,
+            useLastPrices: true,
+            lastPriceGuardType: true,
+            lastPriceGuardInvoicedListNo: true,
+            lastPriceGuardWhiteListNo: true,
+            lastPriceCostBasis: true,
+            lastPriceMinCostPercent: true,
+            active: true,
           city: true,
           district: true,
           phone: true,
           groupCode: true,
           sectorCode: true,
           paymentTerm: true,
+          paymentPlanNo: true,
+          paymentPlanCode: true,
+          paymentPlanName: true,
           hasEInvoice: true,
           balance: true,
           isLocked: true,
         },
       });
 
+        res.json({
+          message: 'Customer updated successfully',
+          customer: updatedCustomer,
+        });
+      } catch (error) {
+        next(error);
+      }
+    }
+
+    /**
+     * GET /api/admin/brands
+     * List distinct brand codes from products
+     */
+    async getBrands(req: Request, res: Response, next: NextFunction) {
+      try {
+        const search = typeof req.query.search === 'string' ? req.query.search.trim() : '';
+        const rows = await prisma.product.findMany({
+          where: search
+            ? { brandCode: { contains: search, mode: 'insensitive' } }
+            : { brandCode: { not: null } },
+          select: { brandCode: true },
+          distinct: ['brandCode'],
+        });
+        const brands = rows
+          .map((row) => (row.brandCode || '').trim())
+          .filter(Boolean)
+          .sort((a, b) => a.localeCompare(b, 'tr'));
+        res.json({ brands });
+      } catch (error) {
+        next(error);
+      }
+    }
+
+    /**
+     * GET /api/admin/customers/:id/price-list-rules
+     */
+    async getCustomerPriceListRules(req: Request, res: Response, next: NextFunction) {
+      try {
+        const { id } = req.params;
+        const customer = await prisma.user.findUnique({
+          where: { id },
+          select: { role: true },
+        });
+
+        if (!customer || customer.role !== 'CUSTOMER') {
+          return res.status(404).json({ error: 'Customer not found' });
+        }
+
+        const rules = await prisma.customerPriceListRule.findMany({
+          where: { customerId: id },
+          orderBy: { createdAt: 'asc' },
+        });
+
+        res.json({ rules });
+      } catch (error) {
+        next(error);
+      }
+    }
+
+    /**
+     * PUT /api/admin/customers/:id/price-list-rules
+     */
+    async updateCustomerPriceListRules(req: Request, res: Response, next: NextFunction) {
+      try {
+        const { id } = req.params;
+        const { rules } = req.body || {};
+
+        if (!Array.isArray(rules)) {
+          return res.status(400).json({ error: 'Rules must be an array' });
+        }
+
+        const customer = await prisma.user.findUnique({
+          where: { id },
+          select: { role: true },
+        });
+
+        if (!customer || customer.role !== 'CUSTOMER') {
+          return res.status(404).json({ error: 'Customer not found' });
+        }
+
+        const normalizedMap = new Map<string, {
+          brandCode: string | null;
+          categoryId: string | null;
+          invoicedPriceListNo: number;
+          whitePriceListNo: number;
+        }>();
+
+        for (const rule of rules) {
+          const brandCode = typeof rule?.brandCode === 'string' ? rule.brandCode.trim() : '';
+          const categoryId = typeof rule?.categoryId === 'string' ? rule.categoryId.trim() : '';
+          const invoiced = Number(rule?.invoicedPriceListNo);
+          const white = Number(rule?.whitePriceListNo);
+
+          if (!brandCode && !categoryId) {
+            return res.status(400).json({ error: 'Brand or category is required' });
+          }
+
+          if (!Number.isFinite(invoiced) || invoiced < 6 || invoiced > 10) {
+            return res.status(400).json({ error: 'Invoiced price list must be between 6 and 10' });
+          }
+
+          if (!Number.isFinite(white) || white < 1 || white > 5) {
+            return res.status(400).json({ error: 'White price list must be between 1 and 5' });
+          }
+
+          const key = `${brandCode || ''}::${categoryId || ''}`;
+          normalizedMap.set(key, {
+            brandCode: brandCode || null,
+            categoryId: categoryId || null,
+            invoicedPriceListNo: invoiced,
+            whitePriceListNo: white,
+          });
+        }
+
+        const normalizedRules = Array.from(normalizedMap.values());
+
+        await prisma.$transaction([
+          prisma.customerPriceListRule.deleteMany({ where: { customerId: id } }),
+          ...(normalizedRules.length > 0
+            ? [prisma.customerPriceListRule.createMany({
+                data: normalizedRules.map((rule) => ({
+                  ...rule,
+                  customerId: id,
+                })),
+              })]
+            : []),
+        ]);
+
+        const updatedRules = await prisma.customerPriceListRule.findMany({
+          where: { customerId: id },
+          orderBy: { createdAt: 'asc' },
+        });
+
+        res.json({ rules: updatedRules });
+      } catch (error) {
+        next(error);
+      }
+    }
+
+  /**
+   * GET /api/admin/customers/:id/sub-users
+   */
+  async getCustomerSubUsers(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { id } = req.params;
+      const subUsers = await prisma.user.findMany({
+        where: { parentCustomerId: id, active: true },
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          active: true,
+          createdAt: true,
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+
+      res.json({ subUsers });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * POST /api/admin/customers/:id/sub-users
+   */
+  async createCustomerSubUser(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { id } = req.params;
+      const { name, email, password, active, autoCredentials } = req.body;
+      const trimmedName = typeof name === 'string' ? name.trim() : '';
+      const trimmedEmail = typeof email === 'string' ? email.trim() : '';
+      const trimmedPassword = typeof password === 'string' ? password.trim() : '';
+
+      const parentCustomer = await prisma.user.findUnique({
+        where: { id },
+        select: {
+          id: true,
+          role: true,
+          customerType: true,
+          priceVisibility: true,
+          mikroCariCode: true,
+        },
+      });
+
+      if (!parentCustomer || parentCustomer.role !== 'CUSTOMER') {
+        return res.status(404).json({ error: 'Customer not found' });
+      }
+
+      if (!trimmedName) {
+        return res.status(400).json({ error: 'Name is required' });
+      }
+
+      let finalEmail = trimmedEmail;
+      let plainPassword = trimmedPassword;
+      let generatedCredentials: { username: string; password: string } | null = null;
+
+      if (autoCredentials || !finalEmail) {
+        const base = buildSubUserBase(parentCustomer.mikroCariCode, parentCustomer.id);
+        let index = 1;
+        while (true) {
+          const candidate = `${base}-${index}`;
+          const existingUser = await prisma.user.findFirst({
+            where: {
+              OR: [{ email: candidate }, { mikroCariCode: candidate }],
+            },
+            select: { id: true },
+          });
+          if (!existingUser) {
+            finalEmail = candidate;
+            break;
+          }
+          index += 1;
+        }
+        if (!plainPassword) {
+          plainPassword = `${finalEmail}123`;
+        }
+        generatedCredentials = { username: finalEmail, password: plainPassword };
+      }
+
+      if (!finalEmail) {
+        return res.status(400).json({ error: 'Email is required' });
+      }
+
+      if (!plainPassword) {
+        return res.status(400).json({ error: 'Password is required' });
+      }
+
+      const existingEmail = await prisma.user.findUnique({
+        where: { email: finalEmail },
+      });
+
+      if (existingEmail) {
+        return res.status(400).json({ error: 'Email already exists' });
+      }
+
+      const hashedPassword = await hashPassword(plainPassword);
+
+      const subUser = await prisma.user.create({
+        data: {
+          email: finalEmail,
+          password: hashedPassword,
+          name: trimmedName,
+          role: 'CUSTOMER',
+          parentCustomerId: parentCustomer.id,
+          customerType: parentCustomer.customerType,
+          priceVisibility: parentCustomer.priceVisibility,
+          active: active !== undefined ? active : true,
+        },
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          active: true,
+          createdAt: true,
+        },
+      });
+
+      await prisma.cart.create({
+        data: {
+          userId: subUser.id,
+        },
+      });
+
+      res.status(201).json({ subUser, credentials: generatedCredentials });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * PUT /api/admin/customers/sub-users/:id
+   */
+  async updateCustomerSubUser(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { id } = req.params;
+      const { name, email, password, active } = req.body;
+      const trimmedEmail = typeof email === 'string' ? email.trim() : email;
+
+      const existingUser = await prisma.user.findUnique({
+        where: { id },
+        select: { id: true, parentCustomerId: true, email: true },
+      });
+
+      if (!existingUser || !existingUser.parentCustomerId) {
+        return res.status(404).json({ error: 'Sub user not found' });
+      }
+
+      if (trimmedEmail && trimmedEmail !== existingUser.email) {
+        const emailTaken = await prisma.user.findUnique({ where: { email: trimmedEmail } });
+        if (emailTaken) {
+          return res.status(400).json({ error: 'Email already in use' });
+        }
+      }
+
+      const updateData: any = {};
+      if (name !== undefined) updateData.name = name;
+      if (email !== undefined) updateData.email = trimmedEmail === '' ? null : trimmedEmail;
+      if (active !== undefined) updateData.active = active;
+      if (password) {
+        updateData.password = await hashPassword(password);
+      }
+
+      const updated = await prisma.user.update({
+        where: { id },
+        data: updateData,
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          active: true,
+          createdAt: true,
+        },
+      });
+
+      res.json({ subUser: updated });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * DELETE /api/admin/customers/sub-users/:id
+   */
+  async deleteCustomerSubUser(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { id } = req.params;
+      const existingUser = await prisma.user.findUnique({
+        where: { id },
+        select: { id: true, parentCustomerId: true, active: true },
+      });
+
+      if (!existingUser || !existingUser.parentCustomerId) {
+        return res.status(404).json({ error: 'Sub user not found' });
+      }
+
+      if (existingUser.active) {
+        await prisma.user.update({
+          where: { id },
+          data: { active: false },
+        });
+      }
+
+      res.json({ message: 'Sub user deactivated' });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * POST /api/admin/customers/sub-users/:id/reset-password
+   */
+  async resetCustomerSubUserPassword(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { id } = req.params;
+      const existingUser = await prisma.user.findUnique({
+        where: { id },
+        select: { id: true, parentCustomerId: true, email: true },
+      });
+
+      if (!existingUser || !existingUser.parentCustomerId) {
+        return res.status(404).json({ error: 'Sub user not found' });
+      }
+
+      const newPassword = buildSubUserPassword(10);
+      const hashedPassword = await hashPassword(newPassword);
+
+      await prisma.user.update({
+        where: { id },
+        data: { password: hashedPassword },
+      });
+
       res.json({
-        message: 'Customer updated successfully',
-        customer: updatedCustomer,
+        credentials: {
+          username: existingUser.email || existingUser.id,
+          password: newPassword,
+        },
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+
+  /**
+   * GET /api/admin/customers/:id/contacts
+   */
+  async getCustomerContacts(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { id } = req.params;
+      const userRole = req.user?.role;
+      const assignedSectorCodes = req.user?.assignedSectorCodes || [];
+
+      if (userRole === 'SALES_REP') {
+        const customer = await prisma.user.findUnique({
+          where: { id },
+          select: { role: true, sectorCode: true },
+        });
+
+        if (!customer || customer.role !== 'CUSTOMER') {
+          return res.status(404).json({ error: 'Customer not found' });
+        }
+
+        if (!customer.sectorCode || !assignedSectorCodes.includes(customer.sectorCode)) {
+          return res.status(403).json({ error: 'You can only access customers in your assigned sectors' });
+        }
+      }
+
+      const contacts = await prisma.customerContact.findMany({
+        where: { customerId: id },
+        orderBy: { createdAt: 'asc' },
+      });
+
+      res.json({ contacts });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * POST /api/admin/customers/:id/contacts
+   */
+  async createCustomerContact(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { id } = req.params;
+      const { name, phone, email } = req.body || {};
+      const trimmedName = (name || '').trim();
+
+      if (!trimmedName) {
+        return res.status(400).json({ error: 'Contact name is required' });
+      }
+
+      const userRole = req.user?.role;
+      const assignedSectorCodes = req.user?.assignedSectorCodes || [];
+
+      const customer = await prisma.user.findUnique({
+        where: { id },
+        select: { role: true, sectorCode: true },
+      });
+
+      if (!customer || customer.role !== 'CUSTOMER') {
+        return res.status(404).json({ error: 'Customer not found' });
+      }
+
+      if (userRole === 'SALES_REP') {
+        if (!customer.sectorCode || !assignedSectorCodes.includes(customer.sectorCode)) {
+          return res.status(403).json({ error: 'You can only access customers in your assigned sectors' });
+        }
+      }
+
+      const contact = await prisma.customerContact.create({
+        data: {
+          customerId: id,
+          name: trimmedName,
+          phone: phone ? String(phone).trim() : null,
+          email: email ? String(email).trim() : null,
+        },
+      });
+
+      res.status(201).json({ contact });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * PUT /api/admin/customers/:id/contacts/:contactId
+   */
+  async updateCustomerContact(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { id, contactId } = req.params;
+      const { name, phone, email } = req.body || {};
+
+      if (name === undefined && phone === undefined && email === undefined) {
+        return res.status(400).json({ error: 'No fields provided to update' });
+      }
+
+      const userRole = req.user?.role;
+      const assignedSectorCodes = req.user?.assignedSectorCodes || [];
+
+      const customer = await prisma.user.findUnique({
+        where: { id },
+        select: { role: true, sectorCode: true },
+      });
+
+      if (!customer || customer.role !== 'CUSTOMER') {
+        return res.status(404).json({ error: 'Customer not found' });
+      }
+
+      if (userRole === 'SALES_REP') {
+        if (!customer.sectorCode || !assignedSectorCodes.includes(customer.sectorCode)) {
+          return res.status(403).json({ error: 'You can only access customers in your assigned sectors' });
+        }
+      }
+
+      const existingContact = await prisma.customerContact.findFirst({
+        where: { id: contactId, customerId: id },
+      });
+
+      if (!existingContact) {
+        return res.status(404).json({ error: 'Contact not found' });
+      }
+
+      const updateData: any = {};
+      if (name !== undefined) {
+        const trimmed = String(name).trim();
+        if (!trimmed) {
+          return res.status(400).json({ error: 'Contact name is required' });
+        }
+        updateData.name = trimmed;
+      }
+      if (phone !== undefined) {
+        const trimmedPhone = String(phone).trim();
+        updateData.phone = trimmedPhone ? trimmedPhone : null;
+      }
+      if (email !== undefined) {
+        const trimmedEmail = String(email).trim();
+        updateData.email = trimmedEmail ? trimmedEmail : null;
+      }
+
+      const contact = await prisma.customerContact.update({
+        where: { id: contactId },
+        data: updateData,
+      });
+
+      res.json({ contact });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * DELETE /api/admin/customers/:id/contacts/:contactId
+   */
+  async deleteCustomerContact(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { id, contactId } = req.params;
+      const userRole = req.user?.role;
+      const assignedSectorCodes = req.user?.assignedSectorCodes || [];
+
+      const customer = await prisma.user.findUnique({
+        where: { id },
+        select: { role: true, sectorCode: true },
+      });
+
+      if (!customer || customer.role !== 'CUSTOMER') {
+        return res.status(404).json({ error: 'Customer not found' });
+      }
+
+      if (userRole === 'SALES_REP') {
+        if (!customer.sectorCode || !assignedSectorCodes.includes(customer.sectorCode)) {
+          return res.status(403).json({ error: 'You can only access customers in your assigned sectors' });
+        }
+      }
+
+      const existingContact = await prisma.customerContact.findFirst({
+        where: { id: contactId, customerId: id },
+      });
+
+      if (!existingContact) {
+        return res.status(404).json({ error: 'Contact not found' });
+      }
+
+      await prisma.customerContact.delete({ where: { id: contactId } });
+
+      res.json({ message: 'Contact deleted successfully' });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * GET /api/admin/exchange/usd
+   */
+  async getUsdSellingRate(req: Request, res: Response, next: NextFunction) {
+    try {
+      const result = await fetchUsdSellingRate();
+      res.json({
+        currency: 'USD',
+        rate: result.rate,
+        fetchedAt: result.fetchedAt,
+        source: 'TCMB',
       });
     } catch (error) {
       next(error);
@@ -658,6 +1901,10 @@ export class AdminController {
 
       // SALES_REP ise sadece atanan sektörlerdeki müşterilerin siparişlerini göster
       if (userRole === 'SALES_REP') {
+        if (assignedSectorCodes.length === 0) {
+          res.json({ orders: [] });
+          return;
+        }
         where.user = {
           sectorCode: { in: assignedSectorCodes }
         };
@@ -677,6 +1924,19 @@ export class AdminController {
               mikroCariCode: true,
               sectorCode: true,
             },
+          },
+          requestedBy: {
+            select: { id: true, name: true, email: true },
+          },
+          customerRequest: {
+            select: {
+              id: true,
+              createdAt: true,
+              requestedBy: { select: { id: true, name: true, email: true } },
+            },
+          },
+          sourceQuote: {
+            select: { id: true, quoteNumber: true, createdAt: true },
           },
           items: {
             include: {
@@ -704,6 +1964,117 @@ export class AdminController {
   }
 
   /**
+   * GET /api/admin/orders/:id
+   */
+  async getOrderById(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { id } = req.params;
+      const userRole = req.user?.role;
+      const assignedSectorCodes = req.user?.assignedSectorCodes || [];
+
+      const order = await prisma.order.findUnique({
+        where: { id },
+        include: {
+          user: { select: { sectorCode: true } },
+        },
+      });
+
+      if (!order) {
+        return res.status(404).json({ error: 'Order not found' });
+      }
+
+      if (userRole == 'SALES_REP') {
+        if (!order.user.sectorCode || !assignedSectorCodes.includes(order.user.sectorCode)) {
+          return res.status(403).json({
+            error: 'You can only access orders from customers in your assigned sectors',
+          });
+        }
+      }
+
+      const detail = await orderService.getOrderById(id);
+      res.json({ order: detail });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * PUT /api/admin/orders/:id
+   */
+  async updateOrder(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { id } = req.params;
+      const { items, customerOrderNumber, deliveryLocation } = req.body || {};
+      const userRole = req.user?.role;
+      const assignedSectorCodes = req.user?.assignedSectorCodes || [];
+
+      const order = await prisma.order.findUnique({
+        where: { id },
+        include: {
+          user: { select: { sectorCode: true } },
+        },
+      });
+
+      if (!order) {
+        return res.status(404).json({ error: 'Order not found' });
+      }
+
+      if (userRole == 'SALES_REP') {
+        if (!order.user.sectorCode || !assignedSectorCodes.includes(order.user.sectorCode)) {
+          return res.status(403).json({
+            error: 'You can only update orders from customers in your assigned sectors',
+          });
+        }
+      }
+
+      const updated = await orderService.updateOrder(id, {
+        items,
+        customerOrderNumber,
+        deliveryLocation,
+      });
+
+      res.json({ order: updated });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * POST /api/admin/orders/last-orders
+   */
+  async getLastOrdersForCustomer(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { customerId, customerCode, productCodes, limit, excludeOrderId } = req.body || {};
+      if ((!customerId && !customerCode) || !Array.isArray(productCodes) || productCodes.length === 0) {
+        return res.json({ lastOrders: {} });
+      }
+
+      const normalizedCodes = productCodes.map((code: any) => String(code)).filter(Boolean);
+      const safeLimit = Math.max(1, Math.min(10, Number(limit) || 1));
+      console.log('LastOrders request', {
+        customerId: customerId ? String(customerId) : null,
+        customerCode: customerCode ? String(customerCode).trim() : null,
+        productCodeCount: normalizedCodes.length,
+        limit: safeLimit,
+      });
+      const lastOrders = await orderService.getCustomerLastOrderItems(
+        customerId ? String(customerId) : '',
+        normalizedCodes,
+        safeLimit,
+        excludeOrderId ? String(excludeOrderId) : undefined,
+        customerCode ? String(customerCode).trim() : undefined
+      );
+
+      const totalRows = Object.values(lastOrders).reduce((sum, list) => sum + (Array.isArray(list) ? list.length : 0), 0);
+      console.log('LastOrders response', { totalRows, productCount: Object.keys(lastOrders).length });
+
+      res.json({ lastOrders });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
    * GET /api/admin/orders/pending
    * ADMIN/MANAGER: Tüm bekleyen siparişler
    * SALES_REP: Sadece atanan sektör kodlarındaki müşterilerin bekleyen siparişleri
@@ -714,10 +2085,58 @@ export class AdminController {
       const assignedSectorCodes = req.user?.assignedSectorCodes || [];
 
       // SALES_REP ise sektör filtresi uygula
+      if (userRole === 'SALES_REP' && assignedSectorCodes.length === 0) {
+        res.json({ orders: [] });
+        return;
+      }
       const sectorFilter = userRole === 'SALES_REP' ? assignedSectorCodes : undefined;
 
       const orders = await orderService.getPendingOrders(sectorFilter);
       res.json({ orders });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * POST /api/admin/orders/manual
+   * Manual order entry for staff
+   */
+  async createManualOrder(req: Request, res: Response, next: NextFunction) {
+    try {
+      const {
+        customerId,
+        items,
+        warehouseNo,
+        description,
+        documentDescription,
+        documentNo,
+        invoicedSeries,
+        invoicedSira,
+        whiteSeries,
+        whiteSira,
+      } = req.body || {};
+
+      const result = await orderService.createManualOrder({
+        customerId,
+        items,
+        warehouseNo,
+        description,
+        documentDescription,
+        documentNo,
+        invoicedSeries,
+        invoicedSira,
+        whiteSeries,
+        whiteSira,
+        requestedById: req.user?.userId,
+      });
+
+      res.json({
+        message: 'Order created in Mikro',
+        mikroOrderIds: result.mikroOrderIds,
+        orderId: result.orderId,
+        orderNumber: result.orderNumber,
+      });
     } catch (error) {
       next(error);
     }
@@ -731,7 +2150,7 @@ export class AdminController {
   async approveOrder(req: Request, res: Response, next: NextFunction) {
     try {
       const { id } = req.params;
-      const { adminNote } = req.body;
+      const { adminNote, invoicedSeries, whiteSeries } = req.body || {};
       const userRole = req.user?.role;
       const assignedSectorCodes = req.user?.assignedSectorCodes || [];
 
@@ -758,7 +2177,10 @@ export class AdminController {
         }
       }
 
-      const result = await orderService.approveOrderAndWriteToMikro(id, adminNote);
+      const result = await orderService.approveOrderAndWriteToMikro(id, adminNote, {
+        invoiced: invoicedSeries,
+        white: whiteSeries,
+      });
 
       res.json({
         message: 'Order approved and sent to Mikro successfully',
@@ -827,7 +2249,7 @@ export class AdminController {
   async approveOrderItems(req: Request, res: Response, next: NextFunction) {
     try {
       const { id } = req.params;
-      const { itemIds, adminNote } = req.body;
+      const { itemIds, adminNote, invoicedSeries, whiteSeries } = req.body || {};
       const userRole = req.user?.role;
       const assignedSectorCodes = req.user?.assignedSectorCodes || [];
 
@@ -858,7 +2280,10 @@ export class AdminController {
         }
       }
 
-      const result = await orderService.approveOrderItemsAndWriteToMikro(id, itemIds, adminNote);
+      const result = await orderService.approveOrderItemsAndWriteToMikro(id, itemIds, adminNote, {
+        invoiced: invoicedSeries,
+        white: whiteSeries,
+      });
 
       res.json({
         message: `${result.approvedCount} items approved successfully`,
@@ -1101,11 +2526,161 @@ export class AdminController {
    */
   async getDashboardStats(req: Request, res: Response, next: NextFunction) {
     try {
-      const [orderStats, customerCount, productCount, lastSync] = await Promise.all([
-        orderService.getOrderStats(),
-        prisma.user.count({ where: { role: 'CUSTOMER', active: true } }),
+      const userRole = req.user?.role;
+      const assignedSectorCodes = req.user?.assignedSectorCodes || [];
+      const ownSectorCode = (req.user as any)?.sectorCode || null;
+      const requestedPeriod = getDashboardPeriod(req.query?.period);
+      const periodRange = getPeriodRange(
+        requestedPeriod,
+        req.query?.startDate,
+        req.query?.endDate
+      );
+      const period = periodRange.resolvedPeriod;
+
+      const isSalesRep = userRole === 'SALES_REP';
+      const salesRepScopeCodes = isSalesRep
+        ? []
+        : await mikroService.executeQuery(`
+            SELECT DISTINCT LTRIM(RTRIM(ISNULL(sktr_kod, ''))) AS sectorCode
+            FROM STOK_SEKTORLERI
+            WHERE ISNULL(sktr_iptal, 0) = 0
+              AND LTRIM(RTRIM(ISNULL(sktr_kod, ''))) <> ''
+              AND UPPER(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
+                LTRIM(RTRIM(ISNULL(sktr_ismi, ''))),
+                'İ','I'),'İ','I'),'Ş','S'),'Ğ','G'),'Ü','U'),'Ö','O'),'Ç','C')) = 'SATIS'
+          `).then((rows: any[]) =>
+            Array.from(
+              new Set(
+                rows
+                  .map((row) => String(row?.sectorCode || '').trim())
+                  .filter(Boolean)
+              )
+            )
+          );
+      const sectorCodes = isSalesRep
+        ? (
+            assignedSectorCodes.length > 0
+              ? assignedSectorCodes
+              : ownSectorCode
+                ? [ownSectorCode]
+                : []
+          )
+        : salesRepScopeCodes;
+      const hasSectorScope = sectorCodes.length > 0;
+      const sectorFilter = hasSectorScope ? sectorCodes : undefined;
+      const customerWhere = hasSectorScope
+        ? { role: 'CUSTOMER' as const, active: true, sectorCode: { in: sectorCodes } }
+        : { role: 'CUSTOMER' as const, active: true };
+      const startDateSql = toIsoDate(periodRange.start);
+      const endDateSql = toIsoDate(periodRange.end);
+      const normalizedSectorTokens = hasSectorScope
+        ? Array.from(
+            new Set(
+              sectorCodes
+                .map((raw) => String(raw || '').trim())
+                .filter(Boolean)
+                .map((value) =>
+                  value
+                    .toUpperCase()
+                    .replace(/İ/g, 'I')
+                    .replace(/Ş/g, 'S')
+                    .replace(/Ğ/g, 'G')
+                    .replace(/Ü/g, 'U')
+                    .replace(/Ö/g, 'O')
+                    .replace(/Ç/g, 'C')
+                )
+            )
+          )
+        : [];
+      const sectorInSql = normalizedSectorTokens.length > 0
+        ? normalizedSectorTokens.map((code) => `'${escapeSqlString(code)}'`).join(', ')
+        : '';
+      const normalizedSectorSqlExpr = (columnName: string) =>
+        `UPPER(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(LTRIM(RTRIM(ISNULL(${columnName}, ''))), 'İ', 'I'), 'İ', 'I'), 'Ş', 'S'), 'Ğ', 'G'), 'Ü', 'U'), 'Ö', 'O'), 'Ç', 'C'))`;
+      const sectorConditionSql = hasSectorScope
+        ? ` AND ${normalizedSectorSqlExpr('c.cari_sektor_kodu')} IN (${sectorInSql})`
+        : '';
+      const fetchMikroSalesSummary = async () => {
+        const sqlQuery = `
+          SELECT
+            COUNT(DISTINCT CONCAT(sth.sth_evrakno_seri, '-', CAST(sth.sth_evrakno_sira AS VARCHAR(30)))) AS salesCount,
+            ISNULL(SUM(ISNULL(sth.sth_tutar, 0)), 0) AS totalAmount
+          FROM STOK_HAREKETLERI sth WITH (NOLOCK)
+          LEFT JOIN CARI_HESAPLAR c WITH (NOLOCK) ON c.cari_kod = sth.sth_cari_kodu
+          WHERE sth.sth_cins = 0
+            AND sth.sth_tip = 1
+            AND sth.sth_tarih >= '${startDateSql}'
+            AND sth.sth_tarih < DATEADD(DAY, 1, '${endDateSql}')
+            ${sectorConditionSql}
+        `;
+        const rows = await mikroService.executeQuery(sqlQuery);
+        const row = rows?.[0] || {};
+        return {
+          count: Number(row.salesCount || 0),
+          amount: Number(row.totalAmount || 0),
+        };
+      };
+      const fetchMikroOrderSummary = async () => {
+        const sqlQuery = `
+          SELECT
+            COUNT(DISTINCT CONCAT(s.sip_evrakno_seri, '-', CAST(s.sip_evrakno_sira AS VARCHAR(30)))) AS orderCount,
+            ISNULL(SUM(
+              CASE
+                WHEN ISNULL(s.sip_tutar, 0) = 0 THEN ISNULL(s.sip_miktar, 0) * ISNULL(s.sip_b_fiyat, 0)
+                ELSE ISNULL(s.sip_tutar, 0)
+              END
+            ), 0) AS totalAmount
+          FROM SIPARISLER s WITH (NOLOCK)
+          LEFT JOIN CARI_HESAPLAR c WITH (NOLOCK) ON c.cari_kod = s.sip_musteri_kod
+          WHERE s.sip_tip = 0
+            AND ISNULL(s.sip_iptal, 0) = 0
+            AND s.sip_tarih >= '${startDateSql}'
+            AND s.sip_tarih < DATEADD(DAY, 1, '${endDateSql}')
+            ${sectorConditionSql}
+        `;
+        const rows = await mikroService.executeQuery(sqlQuery);
+        const row = rows?.[0] || {};
+        return {
+          count: Number(row.orderCount || 0),
+          amount: Number(row.totalAmount || 0),
+        };
+      };
+      const fetchMikroQuoteSummary = async () => {
+        const sqlQuery = `
+          SELECT
+            COUNT(DISTINCT CONCAT(t.tkl_evrakno_seri, '-', CAST(t.tkl_evrakno_sira AS VARCHAR(30)))) AS quoteCount,
+            ISNULL(SUM(ISNULL(t.tkl_Brut_fiyat, 0)), 0) AS totalAmount
+          FROM VERILEN_TEKLIFLER t WITH (NOLOCK)
+          LEFT JOIN CARI_HESAPLAR c WITH (NOLOCK) ON c.cari_kod = t.tkl_cari_kod
+          WHERE ISNULL(t.tkl_iptal, 0) = 0
+            AND t.tkl_evrak_tarihi >= '${startDateSql}'
+            AND t.tkl_evrak_tarihi < DATEADD(DAY, 1, '${endDateSql}')
+            ${sectorConditionSql}
+        `;
+        const rows = await mikroService.executeQuery(sqlQuery);
+        const row = rows?.[0] || {};
+        return {
+          count: Number(row.quoteCount || 0),
+          amount: Number(row.totalAmount || 0),
+        };
+      };
+
+      const [
+        orderStats,
+        customerCount,
+        productCount,
+        lastSync,
+        salesSummary,
+        mikroOrderSummary,
+        mikroQuoteSummary,
+      ] = await Promise.all([
+        orderService.getOrderStats(sectorFilter),
+        prisma.user.count({ where: customerWhere }),
         prisma.product.count({ where: { active: true, excessStock: { gt: 0 } } }),
         prisma.settings.findFirst({ select: { lastSyncAt: true } }),
+        fetchMikroSalesSummary().catch(() => ({ count: 0, amount: 0 })),
+        fetchMikroOrderSummary().catch(() => ({ count: 0, amount: 0 })),
+        fetchMikroQuoteSummary().catch(() => ({ count: 0, amount: 0 })),
       ]);
 
       res.json({
@@ -1113,6 +2688,29 @@ export class AdminController {
         customerCount,
         excessProductCount: productCount,
         lastSyncAt: lastSync?.lastSyncAt,
+        period,
+        periodRange: {
+          startAt: periodRange.start.toISOString(),
+          endAt: periodRange.end.toISOString(),
+        },
+        sectorScope: {
+          mode: isSalesRep ? (assignedSectorCodes.length > 0 ? 'assigned' : ownSectorCode ? 'self' : 'all') : 'all',
+          codes: sectorCodes,
+        },
+        summary: {
+          sales: {
+            count: salesSummary.count,
+            amount: salesSummary.amount,
+          },
+          orders: {
+            count: mikroOrderSummary.count,
+            amount: mikroOrderSummary.amount,
+          },
+          quotes: {
+            count: mikroQuoteSummary.count,
+            amount: mikroQuoteSummary.amount,
+          },
+        },
       });
     } catch (error) {
       next(error);
@@ -1143,14 +2741,14 @@ export class AdminController {
 
   /**
    * GET /api/admin/staff
-   * Get all staff members (ADMIN, MANAGER, SALES_REP)
+   * Get all staff members (ADMIN, MANAGER, SALES_REP, DEPOCU)
    */
   async getStaffMembers(req: Request, res: Response, next: NextFunction) {
     try {
       const staff = await prisma.user.findMany({
         where: {
           role: {
-            in: ['ADMIN', 'MANAGER', 'SALES_REP']
+            in: ['ADMIN', 'MANAGER', 'SALES_REP', 'DEPOCU']
           }
         },
         select: {
@@ -1175,7 +2773,7 @@ export class AdminController {
 
   /**
    * POST /api/admin/staff
-   * Create new staff member (SALES_REP or MANAGER)
+   * Create new staff member (SALES_REP, MANAGER or DEPOCU)
    * Only ADMIN can create MANAGER
    * ADMIN and MANAGER can create SALES_REP
    */
@@ -1189,8 +2787,8 @@ export class AdminController {
         return res.status(400).json({ error: 'Email, password, name, and role are required' });
       }
 
-      if (!['SALES_REP', 'MANAGER'].includes(role)) {
-        return res.status(400).json({ error: 'Role must be either SALES_REP or MANAGER' });
+      if (!['SALES_REP', 'MANAGER', 'DEPOCU'].includes(role)) {
+        return res.status(400).json({ error: 'Role must be SALES_REP, MANAGER or DEPOCU' });
       }
 
       // Only ADMIN can create MANAGER
@@ -1258,7 +2856,7 @@ export class AdminController {
         return res.status(404).json({ error: 'Staff member not found' });
       }
 
-      if (!['ADMIN', 'MANAGER', 'SALES_REP'].includes(existingStaff.role)) {
+      if (!['ADMIN', 'MANAGER', 'SALES_REP', 'DEPOCU'].includes(existingStaff.role)) {
         return res.status(400).json({ error: 'User is not a staff member' });
       }
 
@@ -1314,6 +2912,8 @@ export class AdminController {
    * Upload product image
    */
   async uploadProductImage(req: Request, res: Response, next: NextFunction) {
+    let processedImage: { imageUrl: string; filePath: string; checksum: string; buffer: Buffer } | null = null;
+
     try {
       const { id } = req.params;
 
@@ -1321,21 +2921,54 @@ export class AdminController {
         return res.status(400).json({ error: 'No file uploaded' });
       }
 
-      // Dosya bilgileri
-      const imageUrl = `/uploads/${req.file.filename}`;
-
-      // Ürünü güncelle
-      const product = await prisma.product.update({
+      const product = await prisma.product.findUnique({
         where: { id },
-        data: { imageUrl },
+        select: {
+          id: true,
+          mikroCode: true,
+        },
+      });
+
+      if (!product) {
+        return res.status(404).json({ error: 'Product not found' });
+      }
+
+      const tempPath = (req.file as any).path || path.join(process.cwd(), 'uploads', req.file.filename);
+      processedImage = await imageService.processUploadedProductImage(tempPath, product.mikroCode);
+
+      const guidRows = await mikroService.getProductGuidsByCodes([product.mikroCode]);
+      const productGuid = guidRows.find((row) => row.code === product.mikroCode)?.guid || guidRows[0]?.guid;
+
+      if (!productGuid) {
+        await imageService.removeLocalFile(processedImage.filePath);
+        return res.status(500).json({ error: 'Mikro GUID bulunamadi' });
+      }
+
+      await imageService.uploadImageToMikro(productGuid, processedImage.buffer);
+
+      const updatedProduct = await prisma.product.update({
+        where: { id },
+        data: {
+          imageUrl: processedImage.imageUrl,
+          imageChecksum: processedImage.checksum,
+          imageSyncStatus: 'SUCCESS',
+          imageSyncErrorType: null,
+          imageSyncErrorMessage: null,
+          imageSyncUpdatedAt: new Date(),
+        },
       });
 
       res.json({
         success: true,
-        imageUrl: product.imageUrl,
-        message: 'Fotoğraf başarıyla yüklendi'
+        imageUrl: updatedProduct.imageUrl,
+        imageChecksum: updatedProduct.imageChecksum,
+        imageSyncUpdatedAt: updatedProduct.imageSyncUpdatedAt,
+        message: 'Foto?raf ba?ar?yla y?klendi'
       });
     } catch (error) {
+      if (processedImage?.filePath) {
+        await imageService.removeLocalFile(processedImage.filePath);
+      }
       next(error);
     }
   }
@@ -1350,7 +2983,14 @@ export class AdminController {
 
       const product = await prisma.product.update({
         where: { id },
-        data: { imageUrl: null },
+        data: {
+          imageUrl: null,
+          imageChecksum: null,
+          imageSyncStatus: null,
+          imageSyncErrorType: null,
+          imageSyncErrorMessage: null,
+          imageSyncUpdatedAt: new Date(),
+        },
       });
 
       res.json({
@@ -1471,6 +3111,9 @@ export class AdminController {
               groupCode: cariData.groupCode,
               sectorCode: cariData.sectorCode,
               paymentTerm: cariData.paymentTerm,
+              paymentPlanNo: cariData.paymentPlanNo ?? null,
+              paymentPlanCode: cariData.paymentPlanCode ?? null,
+              paymentPlanName: cariData.paymentPlanName ?? null,
               hasEInvoice: cariData.hasEInvoice,
               balance: cariData.balance,
               balanceUpdatedAt: new Date(),
@@ -1533,9 +3176,12 @@ export class AdminController {
    */
   async getMarginComplianceReport(req: Request, res: Response, next: NextFunction) {
     try {
-      const { customerType, category, status, page, limit, sortBy, sortOrder } = req.query;
+      const { startDate, endDate, includeCompleted, customerType, category, status, page, limit, sortBy, sortOrder } = req.query;
 
       const data = await reportsService.getMarginComplianceReport({
+        startDate: startDate as string,
+        endDate: endDate as string,
+        includeCompleted: includeCompleted ? parseInt(includeCompleted as string) : undefined,
         customerType: customerType as string,
         category: category as string,
         status: status as string,
@@ -1549,6 +3195,78 @@ export class AdminController {
         success: true,
         data,
       });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * POST /admin/reports/margin-compliance/sync
+   * Secili gun raporunu tekrar cekip DB'ye yazar
+   */
+  async syncMarginComplianceReport(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { reportDate, includeCompleted } = req.body || {};
+      const parsedDate = parseReportDateInput(reportDate);
+      if (!parsedDate) {
+        return res.status(400).json({ error: 'Rapor tarihi gerekli (YYYYMMDD).' });
+      }
+
+      const result = await reportsService.syncMarginComplianceReportForDate(parsedDate, {
+        includeCompleted: includeCompleted !== undefined ? Number(includeCompleted) : undefined,
+      });
+
+      if (!result.success) {
+        return res.status(500).json({ success: false, error: result.error || 'Rapor cekilemedi' });
+      }
+
+      res.json({ success: true, data: result });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * POST /admin/reports/margin-compliance/email
+   * Secili gun raporunu manuel mail olarak gonderir
+   */
+  async sendMarginComplianceReportEmail(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { reportDate } = req.body || {};
+      const parsedDate = parseReportDateInput(reportDate);
+      if (!parsedDate) {
+        return res.status(400).json({ error: 'Rapor tarihi gerekli (YYYYMMDD).' });
+      }
+
+      const day = await prisma.marginComplianceReportDay.findUnique({
+        where: { reportDate: parsedDate },
+        select: { status: true },
+      });
+
+      if (!day || day.status !== 'SUCCESS') {
+        return res.status(409).json({ error: 'Veri hazir degil. Once raporu senkronize edin.' });
+      }
+
+      const settings = await prisma.settings.findFirst();
+      const recipients = settings?.marginReportEmailRecipients || [];
+      if (!recipients.length) {
+        return res.status(400).json({ error: 'Mail alicisi bulunamadi.' });
+      }
+
+      const emailPayload = await reportsService.buildMarginComplianceEmailPayload(
+        parsedDate,
+        settings?.marginReportEmailColumns || []
+      );
+
+      await emailService.sendMarginComplianceReportSummary({
+        recipients,
+        reportDate: parsedDate,
+        summary: emailPayload.summary,
+        subject: settings?.marginReportEmailSubject || undefined,
+        attachment: emailPayload.attachment,
+      });
+
+      res.json({ success: true, message: 'Mail gonderildi.' });
     } catch (error) {
       next(error);
     }
@@ -1838,6 +3556,716 @@ export class AdminController {
         success: true,
         data: result,
       });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * GET /api/admin/reports/complement-missing
+   * Tamamlayici urunleri eksik olanlar raporu
+   */
+  async getComplementMissingReport(req: Request, res: Response, next: NextFunction) {
+    try {
+      const {
+        mode,
+        productCode,
+        customerCode,
+        periodMonths,
+        page,
+        limit,
+        matchMode,
+        sectorCode,
+        salesRepId,
+        minDocumentCount,
+      } = req.query;
+
+      const data = await reportsService.getComplementMissingReport({
+        mode: mode as 'product' | 'customer',
+        matchMode: matchMode as 'product' | 'category' | 'group',
+        productCode: productCode as string,
+        customerCode: customerCode as string,
+        sectorCode: sectorCode as string,
+        salesRepId: salesRepId as string,
+        periodMonths: periodMonths ? parseInt(periodMonths as string, 10) : undefined,
+        page: page ? parseInt(page as string, 10) : undefined,
+        limit: limit ? parseInt(limit as string, 10) : undefined,
+        minDocumentCount: minDocumentCount ? parseInt(minDocumentCount as string, 10) : undefined,
+      });
+
+      res.json({
+        success: true,
+        data,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * GET /api/admin/reports/category-churn
+   * Kategori alim kaybi raporu
+   */
+  async getCategoryChurnReport(req: Request, res: Response, next: NextFunction) {
+    try {
+      const {
+        mode,
+        categoryCode,
+        customerCode,
+        inactiveMonths,
+        activeCustomerMonths,
+        page,
+        limit,
+        sortBy,
+        sortDirection,
+      } = req.query;
+
+      const data = await reportsService.getCategoryChurnReport({
+        mode: mode as 'category' | 'customer',
+        categoryCode: categoryCode as string,
+        customerCode: customerCode as string,
+        inactiveMonths: inactiveMonths ? parseInt(inactiveMonths as string, 10) : undefined,
+        activeCustomerMonths: activeCustomerMonths ? parseInt(activeCustomerMonths as string, 10) : undefined,
+        page: page ? parseInt(page as string, 10) : undefined,
+        limit: limit ? parseInt(limit as string, 10) : undefined,
+        sortBy: sortBy as any,
+        sortDirection: sortDirection as 'asc' | 'desc',
+      });
+
+      res.json({
+        success: true,
+        data,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * GET /api/admin/reports/category-opportunity
+   * Kategori firsat onerileri (cari hic almadiysa)
+   */
+  async getCategoryOpportunityReport(req: Request, res: Response, next: NextFunction) {
+    try {
+      const {
+        categoryCode,
+        customerCode,
+        lookbackMonths,
+        minPairCount,
+        limit,
+      } = req.query;
+
+      const data = await reportsService.getCategoryOpportunityReport({
+        categoryCode: categoryCode as string,
+        customerCode: customerCode as string,
+        lookbackMonths: lookbackMonths ? parseInt(lookbackMonths as string, 10) : undefined,
+        minPairCount: minPairCount ? parseInt(minPairCount as string, 10) : undefined,
+        limit: limit ? parseInt(limit as string, 10) : undefined,
+      });
+
+      res.json({
+        success: true,
+        data,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * GET /api/admin/reports/category-options
+   * Kategori arama (kod + ad)
+   */
+  async getCategoryOptions(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { search, limit } = req.query;
+      const data = await reportsService.getCategoryChurnCategoryOptions({
+        search: search as string,
+        limit: limit ? parseInt(limit as string, 10) : undefined,
+      });
+
+      res.json({
+        success: true,
+        data,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * GET /api/admin/reports/category-churn/details
+   * Kategori kaybi detay satirlari
+   */
+  async getCategoryChurnDetail(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { mode, categoryCode, customerCode, inactiveMonths } = req.query;
+      const data = await reportsService.getCategoryChurnDetail({
+        mode: mode as 'category' | 'customer',
+        categoryCode: categoryCode as string,
+        customerCode: customerCode as string,
+        inactiveMonths: inactiveMonths ? parseInt(inactiveMonths as string, 10) : undefined,
+      });
+
+      res.json({
+        success: true,
+        data,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * GET /api/admin/reports/category-churn/export
+   * Kategori kaybi raporu Excel
+   */
+  async exportCategoryChurnReport(req: Request, res: Response, next: NextFunction) {
+    try {
+      const {
+        mode,
+        categoryCode,
+        customerCode,
+        inactiveMonths,
+        activeCustomerMonths,
+        sortBy,
+        sortDirection,
+      } = req.query;
+
+      const { buffer, fileName } = await reportsService.exportCategoryChurnReport({
+        mode: mode as 'category' | 'customer',
+        categoryCode: categoryCode as string,
+        customerCode: customerCode as string,
+        inactiveMonths: inactiveMonths ? parseInt(inactiveMonths as string, 10) : undefined,
+        activeCustomerMonths: activeCustomerMonths ? parseInt(activeCustomerMonths as string, 10) : undefined,
+        sortBy: sortBy as any,
+        sortDirection: sortDirection as 'asc' | 'desc',
+      });
+
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      res.setHeader('Content-Disposition', `attachment; filename=\"${fileName}\"`);
+      res.send(buffer);
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * GET /api/admin/reports/customer-activity
+   * Musteri aktivite ve davranis raporu
+   */
+  async getCustomerActivityReport(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { startDate, endDate, customerCode, userId, page, limit } = req.query;
+
+      const data = await reportsService.getCustomerActivityReport({
+        startDate: startDate as string,
+        endDate: endDate as string,
+        customerCode: customerCode as string,
+        userId: userId as string,
+        page: page ? parseInt(page as string, 10) : undefined,
+        limit: limit ? parseInt(limit as string, 10) : undefined,
+      });
+
+      res.json({
+        success: true,
+        data,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * GET /api/admin/reports/staff-activity
+   * Personel aktivite raporu (sales rep, manager, depocu vb.)
+   */
+  async getStaffActivityReport(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { startDate, endDate, role, userId, page, limit, route } = req.query;
+
+      const data = await reportsService.getStaffActivityReport({
+        startDate: startDate as string,
+        endDate: endDate as string,
+        role: role as any,
+        userId: userId as string,
+        route: route as string,
+        page: page ? parseInt(page as string, 10) : undefined,
+        limit: limit ? parseInt(limit as string, 10) : undefined,
+      });
+
+      res.json({
+        success: true,
+        data,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * GET /api/admin/reports/customer-carts
+   * Musterilerin guncel sepetlerini listeler
+   */
+  async getCustomerCartsReport(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { search, includeEmpty, page, limit } = req.query;
+
+      const data = await reportsService.getCustomerCartsReport({
+        search: search as string,
+        includeEmpty: includeEmpty === '1' || includeEmpty === 'true',
+        page: page ? parseInt(page as string, 10) : undefined,
+        limit: limit ? parseInt(limit as string, 10) : undefined,
+      });
+
+      res.json({
+        success: true,
+        data,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * GET /api/admin/reports/ucarer-depo
+   * Ucarer depo karar raporu (Merkez/Topca)
+   */
+  async getUcarerDepotReport(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { depot, limit, all } = req.query;
+
+      const data = await reportsService.getUcarerDepotReport({
+        depot: String(depot || 'MERKEZ').toUpperCase() === 'TOPCA' ? 'TOPCA' : 'MERKEZ',
+        limit: limit ? parseInt(limit as string, 10) : undefined,
+        all: all === '1' || all === 'true',
+      });
+
+      res.json({
+        success: true,
+        data,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * POST /api/admin/reports/ucarer-minmax/run
+   * MinMax dinamik hesap prosedurunu calistirir
+   */
+  async runUcarerMinMaxReport(req: Request, res: Response, next: NextFunction) {
+    try {
+      const data = await reportsService.runUcarerMinMaxReport();
+
+      res.json({
+        success: true,
+        data,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * GET /api/admin/reports/ucarer-minmax-excluded
+   */
+  async getUcarerMinMaxExcludedProductsReport(req: Request, res: Response, next: NextFunction) {
+    try {
+      const data = await reportsService.getUcarerMinMaxExcludedProductsReport();
+      res.json({ success: true, data });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * GET /api/admin/reports/ucarer-incoming-order-details
+   */
+  async getUcarerIncomingOrderDetails(req: Request, res: Response, next: NextFunction) {
+    try {
+      const productCode = String(req.query.productCode || '').trim();
+      const data = await reportsService.getUcarerIncomingOrderDetails(productCode);
+      res.json({ success: true, data });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * GET /api/admin/reports/ucarer-product-sales-history
+   */
+  async getUcarerProductSalesHistory(req: Request, res: Response, next: NextFunction) {
+    try {
+      const productCode = String(req.query.productCode || '').trim();
+      const data = await reportsService.getUcarerProductSalesHistory(productCode);
+      res.json({ success: true, data });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * GET /api/admin/reports/ucarer-product-purchase-history
+   */
+  async getUcarerProductPurchaseHistory(req: Request, res: Response, next: NextFunction) {
+    try {
+      const productCode = String(req.query.productCode || '').trim();
+      const data = await reportsService.getUcarerProductPurchaseHistory(productCode);
+      res.json({ success: true, data });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * POST /api/admin/reports/ucarer-minmax-exclusion
+   */
+  async setUcarerMinMaxExclusion(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { productCode, exclude, resetMinMaxValues, depot } = req.body as {
+        productCode?: string;
+        exclude?: boolean;
+        resetMinMaxValues?: boolean;
+        depot?: 'MERKEZ' | 'TOPCA';
+      };
+      const data = await reportsService.setUcarerMinMaxExclusion({
+        productCode: String(productCode || ''),
+        exclude: Boolean(exclude),
+        resetMinMaxValues: Boolean(resetMinMaxValues),
+        depot: depot === 'TOPCA' ? 'TOPCA' : 'MERKEZ',
+      });
+      res.json({ success: true, data });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * GET /api/admin/reports/product-families
+   */
+  async getProductFamilies(req: Request, res: Response, next: NextFunction) {
+    try {
+      const data = await reportsService.getProductFamilies();
+      res.json({ success: true, data });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * POST /api/admin/reports/product-families
+   */
+  async createProductFamily(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { name, code, note, active, productCodes } = req.body || {};
+      const result = await reportsService.upsertProductFamily({
+        name,
+        code,
+        note,
+        active,
+        productCodes: Array.isArray(productCodes) ? productCodes : [],
+      });
+      res.json({ success: true, data: result });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * PUT /api/admin/reports/product-families/:id
+   */
+  async updateProductFamily(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { name, code, note, active, productCodes } = req.body || {};
+      const result = await reportsService.upsertProductFamily({
+        id: req.params.id,
+        name,
+        code,
+        note,
+        active,
+        productCodes: Array.isArray(productCodes) ? productCodes : [],
+      });
+      res.json({ success: true, data: result });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * DELETE /api/admin/reports/product-families/:id
+   */
+  async deleteProductFamily(req: Request, res: Response, next: NextFunction) {
+    try {
+      await reportsService.deleteProductFamily(req.params.id);
+      res.json({ success: true, message: 'Aile silindi.' });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * POST /api/admin/reports/product-families/create-supplier-orders
+   */
+  async createSupplierOrdersFromFamilies(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { depot, allocations, supplierConfigs } = req.body as {
+        depot?: 'MERKEZ' | 'TOPCA';
+        supplierConfigs?: Record<
+          string,
+          {
+            series?: string;
+            applyVAT?: boolean;
+            deliveryType?: string;
+            deliveryDate?: string | null;
+          }
+        >;
+        allocations?: Array<{
+          familyId?: string | null;
+          productCode: string;
+          quantity: number;
+          unitPriceOverride?: number | null;
+          supplierCodeOverride?: string | null;
+          persistSupplierOverride?: boolean;
+        }>;
+      };
+      const data = await reportsService.createSupplierOrdersFromFamilyAllocations({
+        depot: depot === 'TOPCA' ? 'TOPCA' : 'MERKEZ',
+        supplierConfigs: supplierConfigs || {},
+        allocations: Array.isArray(allocations) ? allocations : [],
+      });
+      res.json({ success: true, data });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * POST /api/admin/reports/product-families/create-depot-transfer-order
+   */
+  async createDepotTransferOrder(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { depot, series, allocations } = req.body as {
+        depot?: 'MERKEZ' | 'TOPCA';
+        series?: string;
+        allocations?: Array<{ productCode?: string; quantity?: number }>;
+      };
+      const data = await reportsService.createDepotTransferOrder({
+        depot: depot === 'TOPCA' ? 'TOPCA' : 'MERKEZ',
+        series: String(series || 'DSV').trim(),
+        allocations: Array.isArray(allocations)
+          ? allocations.map((row) => ({
+              productCode: String(row.productCode || ''),
+              quantity: Number(row.quantity || 0),
+            }))
+          : [],
+      });
+      res.json({ success: true, data });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * POST /api/admin/reports/ucarer-depo/update-cost
+   */
+  async updateUcarerProductCost(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { productCode, cost, costP, costT, updatePriceLists } = req.body as {
+        productCode?: string;
+        cost?: number;
+        costP?: number;
+        costT?: number;
+        updatePriceLists?: boolean;
+      };
+      const data = await reportsService.updateUcarerProductCost({
+        productCode: String(productCode || ''),
+        cost: Number(cost || 0),
+        costP: costP === undefined ? undefined : Number(costP),
+        costT: costT === undefined ? undefined : Number(costT),
+        updatePriceLists: Boolean(updatePriceLists),
+      });
+      res.json({ success: true, data });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * POST /api/admin/reports/ucarer-depo/update-main-supplier
+   */
+  async updateUcarerMainSupplier(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { productCode, supplierCode } = req.body as {
+        productCode?: string;
+        supplierCode?: string;
+      };
+      const data = await reportsService.updateUcarerMainSupplier({
+        productCode: String(productCode || ''),
+        supplierCode: String(supplierCode || ''),
+      });
+      res.json({ success: true, data });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * POST /api/admin/recommendations/complements
+   * Tamamlayici urun onerilerini getirir.
+   */
+  async getComplementRecommendations(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { productCodes, limit, excludeCodes } = req.body as {
+        productCodes?: string[];
+        excludeCodes?: string[];
+        limit?: number;
+      };
+
+      const normalizedCodes = Array.from(
+        new Set((productCodes || []).map((code) => String(code || '').trim()).filter(Boolean))
+      );
+      const normalizedExcludeCodes = Array.from(
+        new Set((excludeCodes || []).map((code) => String(code || '').trim()).filter(Boolean))
+      );
+
+      if (normalizedCodes.length === 0) {
+        res.json({ success: true, products: [], total: 0 });
+        return;
+      }
+
+      const sourceProducts = await prisma.product.findMany({
+        where: { mikroCode: { in: normalizedCodes } },
+        select: { id: true, mikroCode: true },
+      });
+
+      if (sourceProducts.length === 0) {
+        res.json({ success: true, products: [], total: 0 });
+        return;
+      }
+
+      const excludeProducts = normalizedExcludeCodes.length > 0
+        ? await prisma.product.findMany({
+            where: { mikroCode: { in: normalizedExcludeCodes } },
+            select: { id: true },
+          })
+        : [];
+
+      const excludeIdSet = new Set([
+        ...sourceProducts.map((item) => item.id),
+        ...excludeProducts.map((item) => item.id),
+      ]);
+
+      const safeLimit = Number.isFinite(Number(limit)) && Number(limit) > 0
+        ? Math.min(20, Math.floor(Number(limit)))
+        : 10;
+
+      const sourceIds = sourceProducts.map((item) => item.id);
+      const recommendedIds = await productComplementService.getRecommendationIdsForCart(
+        sourceIds,
+        safeLimit
+      );
+
+      const filteredIds = recommendedIds.filter((id) => !excludeIdSet.has(id));
+      if (filteredIds.length === 0) {
+        res.json({ success: true, products: [], total: 0 });
+        return;
+      }
+
+      const [autoPairs, manualPairs, popularityMap] = await Promise.all([
+        prisma.productComplementAuto.findMany({
+          where: { productId: { in: sourceIds }, relatedProductId: { in: filteredIds } },
+          select: { relatedProductId: true, pairCount: true },
+        }),
+        prisma.productComplementManual.findMany({
+          where: { productId: { in: sourceIds }, relatedProductId: { in: filteredIds } },
+          select: { relatedProductId: true },
+        }),
+        productComplementService.getPopularityByProductIds(filteredIds),
+      ]);
+
+      const pairCountMap = new Map<string, number>();
+      autoPairs.forEach((row) => {
+        const nextValue = (pairCountMap.get(row.relatedProductId) || 0) + (row.pairCount || 0);
+        pairCountMap.set(row.relatedProductId, nextValue);
+      });
+
+      const manualSet = new Set(manualPairs.map((row) => row.relatedProductId));
+      const orderIndex = new Map(filteredIds.map((id, index) => [id, index]));
+
+      const recommendedProducts = await prisma.product.findMany({
+        where: { id: { in: filteredIds } },
+        select: PRODUCT_SELECT,
+      });
+      const enriched = await buildProductsWithPriceLists(recommendedProducts);
+      const productMap = new Map(enriched.map((product: any) => [product.id, product]));
+      const orderedProducts = filteredIds
+        .map((id) => productMap.get(id))
+        .filter(Boolean)
+        .sort((a: any, b: any) => {
+          const aCount = popularityMap.get(a.id) || 0;
+          const bCount = popularityMap.get(b.id) || 0;
+          if (bCount !== aCount) {
+            return bCount - aCount;
+          }
+          return (orderIndex.get(a.id) || 0) - (orderIndex.get(b.id) || 0);
+        })
+        .map((product: any) => {
+          const popularityCount = popularityMap.get(product.id) || 0;
+          const pairCount = pairCountMap.get(product.id) || 0;
+          const isManual = manualSet.has(product.id);
+          const parts: string[] = [];
+          if (isManual) {
+            parts.push('Manuel tamamlayici');
+          } else if (pairCount > 0) {
+            parts.push(`Birlikte ${pairCount} evrak`);
+          }
+          if (popularityCount > 0) {
+            parts.push(`${popularityCount} musteri`);
+          }
+          return {
+            ...product,
+            recommendationNote: parts.length > 0 ? parts.join(' / ') : null,
+          };
+        });
+
+      res.json({ success: true, products: orderedProducts, total: orderedProducts.length });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * GET /api/admin/reports/complement-missing/export
+   * Tamamlayici urun eksikleri raporu Excel
+   */
+  async exportComplementMissingReport(req: Request, res: Response, next: NextFunction) {
+    try {
+      const {
+        mode,
+        productCode,
+        customerCode,
+        periodMonths,
+        matchMode,
+        sectorCode,
+        salesRepId,
+        minDocumentCount,
+      } = req.query;
+
+      const { buffer, fileName } = await reportsService.exportComplementMissingReport({
+        mode: mode as 'product' | 'customer',
+        matchMode: matchMode as 'product' | 'category' | 'group',
+        productCode: productCode as string,
+        customerCode: customerCode as string,
+        sectorCode: sectorCode as string,
+        salesRepId: salesRepId as string,
+        periodMonths: periodMonths ? parseInt(periodMonths as string, 10) : undefined,
+        minDocumentCount: minDocumentCount ? parseInt(minDocumentCount as string, 10) : undefined,
+      });
+
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+      res.send(buffer);
     } catch (error) {
       next(error);
     }

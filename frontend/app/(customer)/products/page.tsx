@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useState, useMemo, useCallback } from 'react';
+import { useEffect, useState, useMemo, useCallback, useRef } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import toast from 'react-hot-toast';
 import { Product, Category } from '@/types';
@@ -10,58 +11,93 @@ import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { ProductCardSkeleton } from '@/components/ui/Skeleton';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { MobileMenu } from '@/components/ui/MobileMenu';
 import { formatCurrency } from '@/lib/utils/format';
+import { getUnitConversionLabel } from '@/lib/utils/unit';
+import { getDisplayPrice, getVatLabel } from '@/lib/utils/vatDisplay';
+import { getDisplayStock, getMaxOrderQuantity } from '@/lib/utils/stock';
+import { confirmBackorder } from '@/lib/utils/confirm';
 import { useAuthStore } from '@/lib/store/authStore';
 import { useCartStore } from '@/lib/store/cartStore';
-import { LogoLink } from '@/components/ui/Logo';
-import { getCustomerTypeName } from '@/lib/utils/customerTypes';
-import { ProductDetailModal } from '@/components/customer/ProductDetailModal';
 import { AdvancedFilters, FilterState } from '@/components/customer/AdvancedFilters';
+import { CategoryMegaMenu } from '@/components/customer/CategoryMegaMenu';
 import { applyProductFilters } from '@/lib/utils/productFilters';
 import { useDebounce } from '@/lib/hooks/useDebounce';
+import { trackCustomerActivity } from '@/lib/analytics/customerAnalytics';
+import { getAllowedPriceTypes, getDefaultPriceType } from '@/lib/utils/priceVisibility';
 
 export default function ProductsPage() {
   const router = useRouter();
-  const { user, loadUserFromStorage, logout } = useAuthStore();
+  const { user, loadUserFromStorage } = useAuthStore();
   const { cart, fetchCart, addToCart, removeItem } = useCartStore();
 
   const cartItems = cart?.items || [];
+  const isSubUser = Boolean(user?.parentCustomerId);
+  const effectiveVisibility = isSubUser
+    ? (user?.priceVisibility === 'WHITE_ONLY' ? 'WHITE_ONLY' : 'INVOICED_ONLY')
+    : user?.priceVisibility;
+  const vatDisplayPreference = user?.vatDisplayPreference || 'WITHOUT_VAT';
+  const allowedPriceTypes = useMemo(() => getAllowedPriceTypes(effectiveVisibility), [effectiveVisibility]);
+  const defaultPriceType = getDefaultPriceType(effectiveVisibility);
+  const defaultFilterPriceType = defaultPriceType === 'INVOICED' ? 'invoiced' : 'white';
+  const allowedFilterPriceTypes = allowedPriceTypes.map((type) => type === 'INVOICED' ? 'invoiced' : 'white');
+  const showPriceTypeSelector = allowedPriceTypes.length > 1;
 
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
-  const [warehouses, setWarehouses] = useState<string[]>([]);
   const [isInitialLoad, setIsInitialLoad] = useState(true);
   const [isSearching, setIsSearching] = useState(false);
   const [search, setSearch] = useState('');
   const debouncedSearch = useDebounce(search, 300);
+  const lastSearchRef = useRef('');
   const [selectedCategory, setSelectedCategory] = useState<string>('');
-  const [selectedWarehouse, setSelectedWarehouse] = useState<string>('');
   const [advancedFilters, setAdvancedFilters] = useState<FilterState>({
     sortBy: 'none',
     priceType: 'invoiced',
   });
+
+  useEffect(() => {
+    setAdvancedFilters((prev) => {
+      if (!allowedFilterPriceTypes.includes(prev.priceType)) {
+        return { ...prev, priceType: defaultFilterPriceType };
+      }
+      return prev;
+    });
+  }, [allowedFilterPriceTypes.join('|'), defaultFilterPriceType]);
+
+  useEffect(() => {
+    const term = debouncedSearch.trim();
+    if (!term) {
+      lastSearchRef.current = '';
+      return;
+    }
+    if (term === lastSearchRef.current) return;
+    lastSearchRef.current = term;
+    trackCustomerActivity({
+      type: 'SEARCH',
+      pagePath: typeof window !== 'undefined' ? `${window.location.pathname}${window.location.search}` : undefined,
+      pageTitle: typeof document !== 'undefined' ? document.title : undefined,
+      meta: { query: term, source: 'products' },
+    });
+  }, [debouncedSearch]);
 
   // Quick add states
   const [quickAddQuantities, setQuickAddQuantities] = useState<Record<string, number>>({});
   const [quickAddPriceTypes, setQuickAddPriceTypes] = useState<Record<string, 'INVOICED' | 'WHITE'>>({});
   const [addingToCart, setAddingToCart] = useState<Record<string, boolean>>({});
 
-  // Modal state
-  const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
-  const [isModalOpen, setIsModalOpen] = useState(false);
-
-  const getMaxQuantity = (product: Product) =>
-    product.maxOrderQuantity ?? product.availableStock ?? product.excessStock ?? 0;
-
-  const getDisplayStock = (product: Product) =>
-    product.availableStock ?? product.excessStock ?? 0;
-
-  const getNormalStock = (product: Product) => {
-    const totalStock = getDisplayStock(product);
-    const excessStock = product.excessStock ?? 0;
-    return Math.max(0, totalStock - excessStock);
-  };
+  useEffect(() => {
+    setQuickAddPriceTypes((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      Object.entries(next).forEach(([productId, priceType]) => {
+        if (!allowedPriceTypes.includes(priceType)) {
+          next[productId] = defaultPriceType;
+          changed = true;
+        }
+      });
+      return changed ? next : prev;
+    });
+  }, [allowedPriceTypes.join('|'), defaultPriceType]);
 
   const getDiscountPercent = (listPrice?: number, salePrice?: number) => {
     if (!listPrice || listPrice <= 0 || !salePrice || salePrice >= listPrice) return null;
@@ -69,12 +105,19 @@ export default function ProductsPage() {
     return discount > 0 ? discount : null;
   };
 
+  const resolveValidExcessPrice = (basePrice?: number, excessPrice?: number) => {
+    if (typeof basePrice !== 'number' || typeof excessPrice !== 'number') return undefined;
+    if (!Number.isFinite(basePrice) || !Number.isFinite(excessPrice)) return undefined;
+    if (excessPrice >= basePrice) return undefined;
+    return excessPrice;
+  };
+
   // Apply advanced filters to products
   const filteredProducts = useMemo(() => {
     return applyProductFilters(products, advancedFilters);
   }, [products, advancedFilters]);
 
-  // Load static data (categories & warehouses) only once on mount
+  // Load static data (categories) only once on mount
   useEffect(() => {
     loadUserFromStorage();
     fetchCart();
@@ -84,13 +127,8 @@ export default function ProductsPage() {
 
   const loadStaticData = useCallback(async () => {
     try {
-      const [categoriesData, warehousesData] = await Promise.all([
-        customerApi.getCategories(),
-        customerApi.getWarehouses(),
-      ]);
-
+      const categoriesData = await customerApi.getCategories();
       setCategories(categoriesData.categories);
-      setWarehouses(warehousesData.warehouses);
     } catch (error) {
       console.error('Statik veri yükleme hatası:', error);
     }
@@ -102,7 +140,6 @@ export default function ProductsPage() {
       const searchParams = {
         categoryId: selectedCategory || undefined,
         search: debouncedSearch || undefined,
-        warehouse: selectedWarehouse || undefined,
         mode: 'all' as const,
       };
 
@@ -114,27 +151,61 @@ export default function ProductsPage() {
       setIsSearching(false);
       setIsInitialLoad(false);
     }
-  }, [selectedCategory, debouncedSearch, selectedWarehouse]);
+  }, [selectedCategory, debouncedSearch]);
 
   // Load products whenever filters change
   useEffect(() => {
-    if (categories.length > 0 && warehouses.length > 0) {
+    if (categories.length > 0) {
       fetchProducts();
     }
-  }, [selectedCategory, debouncedSearch, selectedWarehouse, categories, warehouses, fetchProducts]);
+  }, [selectedCategory, debouncedSearch, categories, fetchProducts]);
 
-  const handleQuickAdd = async (productId: string) => {
+  const handleQuickAdd = async (product: Product) => {
+    const productId = product.id;
     const quantity = quickAddQuantities[productId] || 1;
-    const priceType = quickAddPriceTypes[productId] || 'INVOICED';
+    const requestedPriceType = quickAddPriceTypes[productId] || defaultPriceType;
+    const priceType = allowedPriceTypes.includes(requestedPriceType)
+      ? requestedPriceType
+      : defaultPriceType;
+    const hasAgreement = Boolean(product.agreement);
+    const excessInvoiced = resolveValidExcessPrice(
+      product.prices.invoiced,
+      product.excessPrices?.invoiced
+    );
+    const excessWhite = resolveValidExcessPrice(
+      product.prices.white,
+      product.excessPrices?.white
+    );
+    const showExcessPricing =
+      !hasAgreement &&
+      product.excessStock > 0 &&
+      (excessInvoiced !== undefined || excessWhite !== undefined);
+    const hasSelectedExcessPrice = showExcessPricing
+      ? (priceType === 'INVOICED' ? excessInvoiced !== undefined : excessWhite !== undefined)
+      : false;
+    const effectivePriceMode: 'LIST' | 'EXCESS' = hasSelectedExcessPrice ? 'EXCESS' : 'LIST';
 
     setAddingToCart({ ...addingToCart, [productId]: true });
 
     try {
+      const maxQty = effectivePriceMode === 'EXCESS'
+        ? Math.max(0, Number(product.excessStock) || 0)
+        : getMaxOrderQuantity(product, 'LIST');
+      if (quantity > maxQty) {
+        const confirmed = await confirmBackorder({
+          requestedQty: quantity,
+          availableQty: maxQty,
+          unit: product.unit,
+        });
+        if (!confirmed) {
+          return;
+        }
+      }
       await addToCart({
         productId,
         quantity,
         priceType,
-        priceMode: 'LIST',
+        priceMode: effectivePriceMode,
       });
 
       // Reset quantity after adding
@@ -150,36 +221,6 @@ export default function ProductsPage() {
     } finally {
       setAddingToCart({ ...addingToCart, [productId]: false });
     }
-  };
-
-  const handleModalAddToCart = async (
-    productId: string,
-    quantity: number,
-    priceType: 'INVOICED' | 'WHITE',
-    priceMode: 'LIST' | 'EXCESS' = 'LIST'
-  ) => {
-    try {
-      await addToCart({
-        productId,
-        quantity,
-        priceType,
-        priceMode,
-      });
-
-      toast.success('Ürün sepete eklendi! 🛒', {
-        duration: 2000,
-      });
-    } catch (error: any) {
-      console.error('Cart error:', error);
-      const errorMessage = error.response?.data?.message || error.response?.data?.error || 'Sepete eklenemedi';
-      toast.error(errorMessage);
-      throw error; // Re-throw so modal can handle it
-    }
-  };
-
-  const openProductModal = (product: Product) => {
-    setSelectedProduct(product);
-    setIsModalOpen(true);
   };
 
   // Calculate cart totals
@@ -203,102 +244,17 @@ export default function ProductsPage() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 via-blue-50 to-gray-100">
-      {/* Header */}
-      <header className="bg-gradient-to-r from-primary-700 via-primary-600 to-primary-700 shadow-xl sticky top-0 z-10 border-b-4 border-primary-800">
-        <div className="container-custom py-4 flex justify-between items-center">
-          <div className="flex items-center gap-6">
-            <LogoLink href="/products" variant="light" />
-            <div className="hidden sm:block">
-              <h1 className="text-xl font-bold text-white flex items-center gap-2">
-                <span className="text-2xl">🛍️</span>
-                Ürün Kataloğu
-              </h1>
-              <p className="text-sm text-primary-100">
-                {user.name} • {getCustomerTypeName(user.customerType || '')}
-              </p>
-            </div>
-          </div>
-
-          {/* Desktop Navigation */}
-          <div className="hidden lg:flex gap-2">
-            <Button
-              variant="secondary"
-              onClick={() => router.push('/discounted-products')}
-              className="bg-white text-primary-700 hover:bg-primary-50 border-0 shadow-md"
-            >
-              Indirimli Urunler
-            </Button>
-            <Button
-              variant="secondary"
-              onClick={() => router.push('/previously-purchased')}
-              className="bg-white text-primary-700 hover:bg-primary-50 border-0 shadow-md"
-            >
-              Daha Once Aldiklarim
-            </Button>
-            <Button
-              variant="secondary"
-              onClick={() => router.push('/cart')}
-              className="relative bg-white text-primary-700 hover:bg-primary-50 border-0 shadow-md"
-            >
-              🛒 Sepetim
-              {totalItems > 0 && (
-                <span className="absolute -top-2 -right-2 bg-gradient-to-br from-red-500 to-red-600 text-white text-xs font-bold rounded-full w-6 h-6 flex items-center justify-center shadow-lg animate-pulse">
-                  {totalItems}
-                </span>
-              )}
-            </Button>
-            <Button
-              variant="secondary"
-              onClick={() => router.push('/profile')}
-              className="bg-white text-primary-700 hover:bg-primary-50 border-0 shadow-md"
-            >
-              👤 Profil
-            </Button>
-            <Button
-              variant="ghost"
-              onClick={() => { logout(); router.push('/login'); }}
-              className="text-white hover:bg-primary-800 border border-white/30"
-            >
-              Çıkış
-            </Button>
-          </div>
-
-          {/* Mobile Menu */}
-          <div className="flex items-center gap-2 lg:hidden">
-            {totalItems > 0 && (
-              <button
-                onClick={() => router.push('/cart')}
-                className="relative p-2 text-gray-700 hover:bg-gray-100 rounded-lg"
-              >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z" />
-                </svg>
-                <span className="absolute -top-0.5 -right-0.5 bg-red-500 text-white text-xs font-bold rounded-full w-4 h-4 flex items-center justify-center text-[10px]">
-                  {totalItems}
-                </span>
-              </button>
-            )}
-            <MobileMenu
-              items={[
-                { label: 'Urunler', href: '/products', icon: '??' },
-                { label: 'Indirimli Urunler', href: '/discounted-products', icon: '???' },
-                { label: 'Daha Once Aldiklarim', href: '/previously-purchased', icon: '??' },
-                { label: 'Sepetim', href: '/cart', icon: '??' },
-                { label: 'Siparislerim', href: '/my-orders', icon: '??' },
-                { label: 'Profilim', href: '/profile', icon: '??' },
-                { label: 'Tercihler', href: '/preferences', icon: '??' },
-              ]}
-              user={user}
-              onLogout={() => { logout(); router.push('/login'); }}
-            />
-          </div>
-        </div>
-      </header>
-
       <div className="container-custom py-8">
         <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
           {/* Main content */}
           <div className="lg:col-span-3">
+            <div className="mb-6">
+              <CategoryMegaMenu
+                categories={categories}
+                selectedCategoryId={selectedCategory}
+                onSelect={setSelectedCategory}
+              />
+            </div>
             {/* Filters */}
             <Card className="mb-6 bg-white border-2 border-primary-100 shadow-xl">
               <div className="mb-4 pb-4 border-b-2 border-gray-100">
@@ -309,73 +265,29 @@ export default function ProductsPage() {
               </div>
               <div className="flex flex-wrap gap-4">
                 <div className="flex-1 min-w-[250px]">
-                  <label className="block text-sm font-semibold text-gray-900 mb-2 flex items-center gap-2">
-                    <span>📝</span>
-                    Ürün Ara
+                  <label className="block text-sm font-semibold text-gray-900 mb-2">
+                    Urun Ara
                     {search !== debouncedSearch && (
                       <span className="ml-2 text-xs text-primary-600 font-normal">
-                        (yazıyorsunuz...)
+                        (yaziliyor...)
                       </span>
                     )}
                   </label>
                   <Input
-                    placeholder="Ürün ismi veya kodu..."
+                    placeholder="Urun ismi veya kodu..."
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
                     className="w-full h-11 text-sm border-2 border-gray-200 focus:border-primary-500 rounded-lg shadow-sm"
                   />
                 </div>
-
-                <div className="min-w-[150px]">
-                  <label className="block text-sm font-semibold text-gray-900 mb-2 flex items-center gap-2">
-                    <span>🏢</span>
-                    Depo
-                  </label>
-                  <select
-                    value={selectedWarehouse}
-                    onChange={(e) => setSelectedWarehouse(e.target.value)}
-                    className="input w-full h-11 text-sm border-2 border-gray-200 focus:border-primary-500 rounded-lg shadow-sm"
-                  >
-                    <option value="">Tüm Depolar</option>
-                    {warehouses.map((warehouse) => (
-                      <option key={warehouse} value={warehouse}>
-                        {warehouse}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="min-w-[180px]">
-                  <label className="block text-sm font-semibold text-gray-900 mb-2 flex items-center gap-2">
-                    <span>📁</span>
-                    Kategori
-                  </label>
-                  <select
-                    value={selectedCategory}
-                    onChange={(e) => setSelectedCategory(e.target.value)}
-                    className="input w-full h-11 text-sm border-2 border-gray-200 focus:border-primary-500 rounded-lg shadow-sm"
-                  >
-                    <option value="">Tüm Kategoriler</option>
-                    {categories.map((cat) => (
-                      <option key={cat.id} value={cat.id}>
-                        {cat.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
               </div>
 
-              {(search || selectedWarehouse || selectedCategory) && (
+              {(search || selectedCategory) && (
                 <div className="mt-4 pt-4 border-t-2 border-gray-100 flex flex-wrap items-center gap-2">
                   <span className="text-sm font-semibold text-gray-700">Aktif filtreler:</span>
                   {search && (
                     <span className="bg-gradient-to-r from-primary-100 to-primary-200 text-primary-800 px-3 py-1.5 rounded-lg font-medium text-sm shadow-sm">
                       🔍 "{search}"
-                    </span>
-                  )}
-                  {selectedWarehouse && (
-                    <span className="bg-gradient-to-r from-blue-100 to-blue-200 text-blue-800 px-3 py-1.5 rounded-lg font-medium text-sm shadow-sm">
-                      🏢 {selectedWarehouse}
                     </span>
                   )}
                   {selectedCategory && (
@@ -386,7 +298,6 @@ export default function ProductsPage() {
                   <button
                     onClick={() => {
                       setSearch('');
-                      setSelectedWarehouse('');
                       setSelectedCategory('');
                     }}
                     className="ml-auto bg-gradient-to-r from-red-500 to-red-600 text-white px-4 py-1.5 rounded-lg text-sm font-semibold hover:from-red-600 hover:to-red-700 transition-all shadow-md hover:shadow-lg"
@@ -404,9 +315,10 @@ export default function ProductsPage() {
                 onReset={() => {
                   setAdvancedFilters({
                     sortBy: 'none',
-                    priceType: 'invoiced',
+                    priceType: defaultFilterPriceType,
                   });
                 }}
+                allowedPriceTypes={allowedFilterPriceTypes}
               />
             </div>
 
@@ -420,18 +332,17 @@ export default function ProductsPage() {
             ) : filteredProducts.length === 0 ? (
               <Card>
                 <EmptyState
-                  icon={search || selectedCategory || selectedWarehouse ? 'search' : 'products'}
-                  title={search || selectedCategory || selectedWarehouse ? 'Ürün Bulunamadı' : 'Henüz Ürün Yok'}
+                  icon={search || selectedCategory ? 'search' : 'products'}
+                  title={search || selectedCategory ? 'Ürün Bulunamadı' : 'Henüz Ürün Yok'}
                   description={
-                    search || selectedCategory || selectedWarehouse
+                    search || selectedCategory
                       ? 'Arama kriterlerinize uygun ürün bulunamadı. Filtreleri değiştirerek tekrar deneyin.'
                       : 'Ürünler senkronize edildiğinde burada görüntülenecektir.'
                   }
-                  actionLabel={search || selectedCategory || selectedWarehouse ? 'Filtreleri Temizle' : undefined}
-                  onAction={search || selectedCategory || selectedWarehouse ? () => {
+                  actionLabel={search || selectedCategory ? 'Filtreleri Temizle' : undefined}
+                  onAction={search || selectedCategory ? () => {
                     setSearch('');
                     setSelectedCategory('');
-                    setSelectedWarehouse('');
                   } : undefined}
                 />
               </Card>
@@ -447,19 +358,79 @@ export default function ProductsPage() {
                   </div>
                 )}
                 <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
-                {filteredProducts.map((product) => (
+                {filteredProducts.map((product) => {
+                  const unitLabel = getUnitConversionLabel(product.unit, product.unit2, product.unit2Factor);
+                  const vatPercent = Math.round((Number(product.vatRate) || 0) * 100);
+                                    const selectedPriceType = allowedPriceTypes.includes(quickAddPriceTypes[product.id])
+                    ? quickAddPriceTypes[product.id]
+                    : defaultPriceType;
+                  const selectedPrice = selectedPriceType === 'INVOICED' ? product.prices.invoiced : product.prices.white;
+                  const hasAgreement = Boolean(product.agreement);
+                  const excessInvoiced = resolveValidExcessPrice(
+                    product.prices.invoiced,
+                    product.excessPrices?.invoiced
+                  );
+                  const excessWhite = resolveValidExcessPrice(
+                    product.prices.white,
+                    product.excessPrices?.white
+                  );
+                  const showExcessPricing =
+                    !hasAgreement &&
+                    product.excessStock > 0 &&
+                    (excessInvoiced !== undefined || excessWhite !== undefined);
+                  const selectedExcessPrice = showExcessPricing
+                    ? (selectedPriceType === 'INVOICED' ? excessInvoiced : excessWhite)
+                    : undefined;
+                  const selectedExcessDiscount = showExcessPricing && selectedExcessPrice
+                    ? getDiscountPercent(
+                        selectedPriceType === 'INVOICED' ? product.prices.invoiced : product.prices.white,
+                        selectedExcessPrice
+                      )
+                    : null;
+                  const displaySelectedPrice = getDisplayPrice(
+                    selectedPrice,
+                    product.vatRate,
+                    selectedPriceType,
+                    vatDisplayPreference
+                  );
+                  const displaySelectedExcessPrice = selectedExcessPrice !== undefined
+                    ? getDisplayPrice(selectedExcessPrice, product.vatRate, selectedPriceType, vatDisplayPreference)
+                    : undefined;
+                  const displayInvoicedPrice = getDisplayPrice(
+                    product.prices.invoiced,
+                    product.vatRate,
+                    'INVOICED',
+                    vatDisplayPreference
+                  );
+                  const displayWhitePrice = getDisplayPrice(
+                    product.prices.white,
+                    product.vatRate,
+                    'WHITE',
+                    vatDisplayPreference
+                  );
+                  const displayExcessInvoiced = excessInvoiced !== undefined
+                    ? getDisplayPrice(excessInvoiced, product.vatRate, 'INVOICED', vatDisplayPreference)
+                    : undefined;
+                  const displayExcessWhite = excessWhite !== undefined
+                    ? getDisplayPrice(excessWhite, product.vatRate, 'WHITE', vatDisplayPreference)
+                    : undefined;
+                  const selectedVatLabel = getVatLabel(selectedPriceType, vatDisplayPreference);
+                  const invoicedVatLabel = getVatLabel('INVOICED', vatDisplayPreference);
+  return (
                   <Card key={product.id} className="group hover:shadow-2xl hover:scale-105 transition-all duration-300 overflow-hidden flex flex-col h-full p-0 border-2 border-gray-200 hover:border-primary-400 bg-white rounded-xl">
                     <div className="space-y-3 flex flex-col h-full">
                       {/* Product Image */}
-                      <div
-                        className="w-full h-40 bg-gradient-to-br from-gray-100 via-gray-200 to-gray-300 overflow-hidden relative cursor-pointer"
-                        onClick={() => openProductModal(product)}
+                      <Link
+                        href={`/products/${product.id}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="block w-full aspect-square bg-white overflow-hidden relative cursor-pointer"
                       >
                         {product.imageUrl ? (
                           <img
                             src={product.imageUrl}
                             alt={product.name}
-                            className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-300"
+                            className="w-full h-full object-contain group-hover:scale-110 transition-transform duration-300"
                           />
                         ) : (
                           <div className="w-full h-full flex items-center justify-center text-gray-400">
@@ -469,14 +440,14 @@ export default function ProductsPage() {
                           </div>
                         )}
                         {/* Stock badge */}
-                        <div className="absolute top-2 right-2 bg-gradient-to-br from-green-500 to-green-600 text-white text-xs font-bold px-2 py-1 rounded-lg shadow-lg">
+                        <div className="absolute top-2 right-2 z-20 bg-gradient-to-br from-green-500 to-green-600 text-white text-xs font-bold px-2 py-1 rounded-lg shadow-lg">
                           <div className="text-[10px] uppercase tracking-wide opacity-80">Stok</div>
-                          <div>{getNormalStock(product)} {product.unit}</div>
+                          <div>{getDisplayStock(product)} {product.unit}</div>
                         </div>
                         {product.excessStock > 0 && (
-                          <div className="absolute top-2 left-2 bg-gradient-to-br from-orange-500 to-orange-600 text-white text-xs font-bold px-2 py-1 rounded-lg shadow-lg">
-                            <div className="text-[10px] uppercase tracking-wide opacity-80">Fazla</div>
-                            <div>{product.excessStock} {product.unit}</div>
+                          <div className="absolute bottom-2 left-2 z-20 max-w-[70%] bg-gradient-to-br from-orange-500 to-orange-600 text-white text-xs font-bold px-2 py-1 rounded-lg shadow-lg">
+                            <div className="text-[9px] uppercase tracking-wide opacity-90">Indirimli</div>
+                            <div className="truncate">{product.excessStock} {product.unit}</div>
                           </div>
                         )}
                         {/* Overlay on hover */}
@@ -485,20 +456,31 @@ export default function ProductsPage() {
                             🔍 Detaylı İncele
                           </div>
                         </div>
-                      </div>
+                      </Link>
 
                       <div className="px-3 min-h-[60px]">
-                        <h3
-                          className="font-bold text-gray-900 text-sm line-clamp-2 leading-tight cursor-pointer hover:text-primary-600 transition-colors mb-2"
-                          onClick={() => openProductModal(product)}
+                        <Link
+                          href={`/products/${product.id}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="font-bold text-gray-900 text-sm leading-snug break-words cursor-pointer hover:text-primary-600 transition-colors mb-2 block"
                         >
                           {product.name}
-                        </h3>
+                        </Link>
                         <div className="flex flex-col gap-1">
                           <span className="text-xs text-gray-500 font-mono">Kod: {product.mikroCode}</span>
                           <span className="bg-gradient-to-r from-primary-100 to-primary-200 text-primary-700 text-xs font-semibold px-2 py-0.5 rounded inline-block">
                             {product.category.name}
                           </span>
+                          {unitLabel && (
+                            <span className="text-xs text-gray-500">{unitLabel}</span>
+                          )}
+                          <span className="text-xs text-gray-500">KDV: %{vatPercent}</span>
+                          {hasAgreement && (
+                            <span className="text-[10px] bg-blue-100 text-blue-800 px-2 py-0.5 rounded inline-block">
+                              Anlasma: min {product.agreement?.minQuantity ?? 1} {product.unit}
+                            </span>
+                          )}
                         </div>
                       </div>
 
@@ -506,48 +488,88 @@ export default function ProductsPage() {
                       <div className="flex-1"></div>
 
                       {/* Price Type Selection */}
-                      <div className="px-3 grid grid-cols-2 gap-2">
-                        <button
-                          className={`py-2 px-2 rounded-lg text-xs font-semibold transition-all shadow-md ${
-                            (quickAddPriceTypes[product.id] || 'INVOICED') === 'INVOICED'
-                              ? 'bg-gradient-to-br from-primary-600 to-primary-700 text-white scale-105 shadow-lg'
-                              : 'bg-white text-gray-700 hover:bg-gray-50 border-2 border-gray-200 hover:border-primary-300'
-                          }`}
-                          onClick={() => setQuickAddPriceTypes({ ...quickAddPriceTypes, [product.id]: 'INVOICED' })}
-                        >
-                          <div className="opacity-80 mb-0.5">📄 Faturalı</div>
-                          <div className="font-bold text-sm">{formatCurrency(product.prices.invoiced)}</div>
-                          {product.excessPrices && product.excessStock > 0 && (
-                            <div className="text-[10px] text-green-700 font-semibold">
-                              Fazla: {formatCurrency(product.excessPrices.invoiced)}
-                              {getDiscountPercent(product.prices.invoiced, product.excessPrices.invoiced) && (
-                                <span> (-%{getDiscountPercent(product.prices.invoiced, product.excessPrices.invoiced)})</span>
+                      {showPriceTypeSelector ? (
+                        <div className="px-3 grid grid-cols-2 gap-2">
+                          {allowedPriceTypes.includes('INVOICED') && (
+                            <button
+                              className={`py-2 px-2 rounded-lg text-xs font-semibold transition-all shadow-md ${
+                                selectedPriceType === 'INVOICED'
+                                  ? 'bg-gradient-to-br from-primary-600 to-primary-700 text-white scale-105 shadow-lg'
+                                  : 'bg-white text-gray-700 hover:bg-gray-50 border-2 border-gray-200 hover:border-primary-300'
+                              }`}
+                              onClick={() => setQuickAddPriceTypes({ ...quickAddPriceTypes, [product.id]: 'INVOICED' })}
+                            >
+                              <div className="opacity-80 mb-0.5">Faturali</div>
+                              {showExcessPricing && displayExcessInvoiced !== undefined ? (
+                                <>
+                                  <div className="font-bold text-sm text-green-700">
+                                    Indirimli: {formatCurrency(displayExcessInvoiced)}
+                                    {getDiscountPercent(product.prices.invoiced, excessInvoiced) && (
+                                      <span> (-%{getDiscountPercent(product.prices.invoiced, excessInvoiced)})</span>
+                                    )}
+                                  </div>
+                                  <div className="text-[10px] text-gray-500 line-through">
+                                    Normal: {formatCurrency(displayInvoicedPrice)}
+                                  </div>
+                                </>
+                              ) : (
+                                <div className="font-bold text-sm">{formatCurrency(displayInvoicedPrice)}</div>
                               )}
-                            </div>
+                              <div className="text-[10px] opacity-70 mt-0.5">{invoicedVatLabel}</div>
+                            </button>
                           )}
-                          <div className="text-[10px] opacity-70 mt-0.5">+KDV</div>
-                        </button>
-                        <button
-                          className={`py-2 px-2 rounded-lg text-xs font-semibold transition-all shadow-md ${
-                            quickAddPriceTypes[product.id] === 'WHITE'
-                              ? 'bg-gradient-to-br from-gray-700 to-gray-800 text-white scale-105 shadow-lg'
-                              : 'bg-white text-gray-700 hover:bg-gray-50 border-2 border-gray-200 hover:border-gray-400'
-                          }`}
-                          onClick={() => setQuickAddPriceTypes({ ...quickAddPriceTypes, [product.id]: 'WHITE' })}
-                        >
-                          <div className="opacity-80 mb-0.5">⚪ Beyaz</div>
-                          <div className="font-bold text-sm">{formatCurrency(product.prices.white)}</div>
-                          {product.excessPrices && product.excessStock > 0 && (
-                            <div className="text-[10px] text-green-700 font-semibold">
-                              Fazla: {formatCurrency(product.excessPrices.white)}
-                              {getDiscountPercent(product.prices.white, product.excessPrices.white) && (
-                                <span> (-%{getDiscountPercent(product.prices.white, product.excessPrices.white)})</span>
+                          {allowedPriceTypes.includes('WHITE') && (
+                            <button
+                              className={`py-2 px-2 rounded-lg text-xs font-semibold transition-all shadow-md ${
+                                selectedPriceType === 'WHITE'
+                                  ? 'bg-gradient-to-br from-gray-700 to-gray-800 text-white scale-105 shadow-lg'
+                                  : 'bg-white text-gray-700 hover:bg-gray-50 border-2 border-gray-200 hover:border-gray-400'
+                              }`}
+                              onClick={() => setQuickAddPriceTypes({ ...quickAddPriceTypes, [product.id]: 'WHITE' })}
+                            >
+                              <div className="opacity-80 mb-0.5">Beyaz</div>
+                              {showExcessPricing && displayExcessWhite !== undefined ? (
+                                <>
+                                  <div className="font-bold text-sm text-green-700">
+                                    Indirimli: {formatCurrency(displayExcessWhite)}
+                                    {getDiscountPercent(product.prices.white, excessWhite) && (
+                                      <span> (-%{getDiscountPercent(product.prices.white, excessWhite)})</span>
+                                    )}
+                                  </div>
+                                  <div className="text-[10px] text-gray-500 line-through">
+                                    Normal: {formatCurrency(displayWhitePrice)}
+                                  </div>
+                                </>
+                              ) : (
+                                <div className="font-bold text-sm">{formatCurrency(displayWhitePrice)}</div>
                               )}
-                            </div>
+                              <div className="text-[10px] opacity-70 mt-0.5">{getVatLabel('WHITE', vatDisplayPreference)}</div>
+                            </button>
                           )}
-                          <div className="text-[10px] opacity-70 mt-0.5">Özel</div>
-                        </button>
-                      </div>
+                        </div>
+                      ) : (
+                        <div className="px-3">
+                          <div className="rounded-lg border-2 border-gray-200 bg-white px-2 py-2 text-xs font-semibold text-gray-700">
+                            <div className="opacity-80 mb-0.5">{selectedPriceType === 'INVOICED' ? 'Faturali' : 'Beyaz'}</div>
+                            {showExcessPricing && displaySelectedExcessPrice !== undefined ? (
+                              <>
+                                <div className="font-bold text-sm text-green-700">
+                                  Indirimli: {formatCurrency(displaySelectedExcessPrice)}
+                                  {selectedExcessDiscount && (
+                                    <span> (-%{selectedExcessDiscount})</span>
+                                  )}
+                                </div>
+                                <div className="text-[10px] text-gray-500 line-through">
+                                  Normal: {formatCurrency(displaySelectedPrice)}
+                                </div>
+                              </>
+                            ) : (
+                              <div className="font-bold text-sm">{formatCurrency(displaySelectedPrice)}</div>
+                            )}
+                            <div className="text-[10px] opacity-70 mt-0.5">{selectedVatLabel}</div>
+                          </div>
+                        </div>
+                      )}
 
                       {/* Quantity & Add to Cart */}
                       <div className="px-3 pb-3 flex gap-2 items-center">
@@ -562,7 +584,8 @@ export default function ProductsPage() {
                             if (value === '' || parseInt(value) === 0) {
                               return; // Allow empty during typing
                             }
-                            const numValue = Math.max(1, Math.min(getMaxQuantity(product), parseInt(value)));
+                            const numericValue = parseInt(value);
+                            const numValue = Math.max(1, numericValue);
                             setQuickAddQuantities({
                               ...quickAddQuantities,
                               [product.id]: numValue
@@ -583,7 +606,7 @@ export default function ProductsPage() {
                         <Button
                           size="sm"
                           className="flex-1 bg-gradient-to-r from-green-600 to-green-700 hover:from-green-700 hover:to-green-800 text-white font-bold text-xs h-10 px-3 rounded-lg shadow-md hover:shadow-lg transition-all"
-                          onClick={() => handleQuickAdd(product.id)}
+                          onClick={() => handleQuickAdd(product)}
                           isLoading={addingToCart[product.id]}
                         >
                           🛒 Ekle
@@ -591,7 +614,8 @@ export default function ProductsPage() {
                       </div>
                     </div>
                   </Card>
-                ))}
+                );
+                })}
               </div>
               </div>
             )}
@@ -599,7 +623,7 @@ export default function ProductsPage() {
 
           {/* Cart Preview Sidebar */}
           <div className="lg:col-span-1">
-            <Card className="sticky top-24 shadow-2xl bg-gradient-to-br from-white via-gray-50 to-white border-2 border-primary-100">
+            <Card className="sticky top-24 shadow-2xl bg-gradient-to-br from-white via-gray-50 to-white border-2 border-primary-100 lg:max-h-[calc(100vh-6rem)] lg:flex lg:flex-col lg:overflow-hidden">
               <div className="flex items-center justify-between mb-6 pb-4 border-b-2 border-gray-100">
                 <h3 className="font-bold text-xl flex items-center gap-2 text-gray-900">
                   <span className="text-2xl">🛒</span>
@@ -623,7 +647,7 @@ export default function ProductsPage() {
                   <p className="text-xs text-gray-400 mt-1">Ürün ekleyerek başlayın</p>
                 </div>
               ) : (
-                <div className="space-y-4">
+                <div className="flex flex-col gap-4 min-h-0 lg:flex-1">
                   {/* Clear Cart Button */}
                   <button
                     onClick={async () => {
@@ -661,7 +685,7 @@ export default function ProductsPage() {
                     🗑️ Sepeti Temizle
                   </button>
 
-                  <div className="max-h-80 overflow-y-auto space-y-2 pr-2">
+                  <div className="max-h-80 overflow-y-auto space-y-2 pr-2 min-h-0 lg:max-h-none lg:flex-1">
                     {(cartItems || []).map((item) => (
                       <div key={item.id} className="text-sm bg-white border border-gray-200 rounded-lg p-3 shadow-sm">
                         <div className="flex justify-between items-start mb-1">
@@ -751,13 +775,6 @@ export default function ProductsPage() {
         </div>
       </div>
 
-      {/* Product Detail Modal */}
-      <ProductDetailModal
-        product={selectedProduct}
-        isOpen={isModalOpen}
-        onClose={() => setIsModalOpen(false)}
-        onAddToCart={handleModalAddToCart}
-      />
     </div>
   );
 }

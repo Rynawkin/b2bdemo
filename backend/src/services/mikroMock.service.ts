@@ -11,6 +11,8 @@ import {
   MikroWarehouseStock,
   MikroSalesMovement,
   MikroPendingOrder,
+  MikroPendingOrderByWarehouse,
+  MikroCariPersonel,
 } from '../types';
 
 export class MikroMockService {
@@ -30,6 +32,10 @@ export class MikroMockService {
       7: 0.10,  // %10
     };
     return vatMap[vatCode] ?? 0.20; // Default %20
+  }
+
+  async disconnect(): Promise<void> {
+    return;
   }
 
   /**
@@ -248,6 +254,21 @@ export class MikroMockService {
     ];
   }
 
+  async getProductGuidsByCodes(productCodes: string[]): Promise<Array<{ code: string; guid: string | null }>> {
+    if (!productCodes || productCodes.length === 0) {
+      return [];
+    }
+
+    const uniqueCodes = Array.from(
+      new Set(productCodes.map((code) => (code || '').trim()).filter((code) => code.length > 0))
+    );
+
+    return uniqueCodes.map((code) => ({
+      code,
+      guid: null,
+    }));
+  }
+
   /**
    * Mock depo stokları
    */
@@ -373,6 +394,45 @@ export class MikroMockService {
   /**
    * Mock bekleyen siparişler
    */
+  /**
+   * Mock: cari bazlÄ± son satÄ±ÅŸ hareketleri
+   */
+  async getCustomerSalesMovements(
+    _cariCode: string,
+    productCodes: string[],
+    limit = 1
+  ): Promise<Array<{
+    productCode: string;
+    saleDate: Date;
+    quantity: number;
+    unitPrice: number;
+    lineTotal: number;
+    vatAmount: number;
+    vatRate: number;
+    vatZeroed: boolean;
+  }>> {
+    const now = new Date();
+    return productCodes.flatMap((code) => {
+      return Array.from({ length: limit }).map((_, idx) => {
+        const quantity = Math.max(1, idx + 1);
+        const unitPrice = 100 + idx * 10;
+        const lineTotal = unitPrice * quantity;
+        const vatRate = 0.18;
+        const vatAmount = lineTotal * vatRate;
+        return {
+          productCode: code,
+          saleDate: new Date(now.getTime() - idx * 86400000),
+          quantity,
+          unitPrice,
+          lineTotal,
+          vatAmount,
+          vatRate,
+          vatZeroed: false,
+        };
+      });
+    });
+  }
+
   async getPendingOrders(): Promise<MikroPendingOrder[]> {
     return [
       // Bekleyen müşteri siparişleri
@@ -384,6 +444,18 @@ export class MikroMockService {
       { productCode: 'URN-003', quantity: 15, type: 'PURCHASE' },
       { productCode: 'URN-011', quantity: 10, type: 'PURCHASE' },
       { productCode: 'URN-014', quantity: 8, type: 'PURCHASE' },
+    ];
+  }
+
+  async getPendingOrdersByWarehouse(): Promise<MikroPendingOrderByWarehouse[]> {
+    return [
+      { productCode: 'URN-001', warehouseCode: '1', quantity: 3, type: 'SALES' },
+      { productCode: 'URN-001', warehouseCode: '6', quantity: 2, type: 'SALES' },
+      { productCode: 'URN-004', warehouseCode: '1', quantity: 20, type: 'SALES' },
+      { productCode: 'URN-005', warehouseCode: '1', quantity: 10, type: 'SALES' },
+      { productCode: 'URN-003', warehouseCode: '1', quantity: 15, type: 'PURCHASE' },
+      { productCode: 'URN-011', warehouseCode: '6', quantity: 10, type: 'PURCHASE' },
+      { productCode: 'URN-014', warehouseCode: '1', quantity: 8, type: 'PURCHASE' },
     ];
   }
 
@@ -415,7 +487,10 @@ export class MikroMockService {
     isLocked: boolean;
     groupCode?: string;
     sectorCode?: string;
-    paymentTerm?: number;
+    paymentTerm?: number | null;
+    paymentPlanNo?: number | null;
+    paymentPlanCode?: string | null;
+    paymentPlanName?: string | null;
     hasEInvoice: boolean;
     balance: number;
   }>> {
@@ -430,6 +505,9 @@ export class MikroMockService {
         groupCode: 'BAYI',
         sectorCode: 'SATIŞ',
         paymentTerm: 30,
+        paymentPlanNo: 1,
+        paymentPlanCode: '30',
+        paymentPlanName: '30 GUN VADE',
         hasEInvoice: true,
         balance: 15000,
       },
@@ -443,6 +521,9 @@ export class MikroMockService {
         groupCode: 'PERAKENDE',
         sectorCode: 'SATIŞ',
         paymentTerm: 15,
+        paymentPlanNo: 15,
+        paymentPlanCode: '15',
+        paymentPlanName: '15 GUN VADE',
         hasEInvoice: true,
         balance: -5000,
       },
@@ -456,9 +537,48 @@ export class MikroMockService {
         groupCode: 'VIP',
         sectorCode: 'SATIŞ',
         paymentTerm: 45,
+        paymentPlanNo: 8,
+        paymentPlanCode: '45',
+        paymentPlanName: '45 GUN VADE',
         hasEInvoice: false,
         balance: 0,
       },
+    ];
+  }
+
+  async getEInvoiceMetadataByGibNo(_gibNo: string): Promise<{
+    gibNo: string;
+    uuid: string | null;
+    evrakSeri: string | null;
+    evrakSira: number | null;
+    cariCode: string | null;
+    cariName: string | null;
+    issueDate: Date | null;
+    sentAt: Date | null;
+    currencyCode: number | null;
+  } | null> {
+    return null;
+  }
+
+  async getInvoiceTotalsByEvrak(_evrakSeri: string, _evrakSira: number): Promise<{
+    subtotal?: number | null;
+    total?: number | null;
+    currency?: string | null;
+    issueDate?: Date | null;
+  } | null> {
+    return null;
+  }
+
+  /**
+   * Mock cari personel listesi
+   */
+  async getCariPersonelList(): Promise<MikroCariPersonel[]> {
+    return [
+      { code: '195.01.001', name: 'Necati', surname: 'UCAREP' },
+      { code: '195.01.002', name: 'Ensar', surname: 'UCAREP' },
+      { code: '195.01.003', name: 'Burcu', surname: 'Tiryaki' },
+      { code: '195.01.006', name: 'Duygu', surname: 'Tiryaki' },
+      { code: '195.01.007', name: 'Selim', surname: 'IMAK' },
     ];
   }
 
@@ -491,9 +611,18 @@ export class MikroMockService {
       quantity: number;
       unitPrice: number;
       vatRate: number;
+      lineDescription?: string;
+      quoteLineGuid?: string;
+      responsibilityCenter?: string;
+      reserveQty?: number;
     }>;
     applyVAT: boolean;
     description: string;
+    documentDescription?: string;
+    documentNo?: string;
+    evrakSeri?: string;
+    evrakSira?: number;
+    warehouseNo?: number;
   }): Promise<string> {
     // Mock sipariş ID üret
     const mockOrderId = `MKR-${Date.now()}-${Math.random().toString(36).substring(7)}`;
@@ -511,6 +640,131 @@ export class MikroMockService {
    * Mock cari hesap kontrolü ve oluşturma
    * Gerçek sistemde Mikro'ya cari kaydı yazacak
    */
+  /**
+   * Mock Mikro'ya teklif yazma
+   */
+  async hasOrdersForQuote(_params: { evrakSeri: string; evrakSira: number }): Promise<boolean> {
+    return false;
+  }
+
+  async writeQuote(quoteData: {
+    cariCode: string;
+    quoteNumber: string;
+    validityDate: Date;
+    description: string;
+    documentNo?: string;
+    responsibleCode?: string;
+    paymentPlanNo?: number | null;
+    items: Array<{
+      productCode: string;
+      quantity: number;
+      unitPrice: number;
+      vatRate: number;
+      lineDescription?: string;
+      priceListNo?: number;
+    }>;
+  }): Promise<{ quoteNumber: string; guid?: string }> {
+    const mockQuoteNumber = `M-${Math.floor(Math.random() * 10000) + 1000}`;
+
+    console.log('ğŸ“ [MOCK] Mikro\'ya teklif yazÄ±ldÄ±:', {
+      ...quoteData,
+      mockQuoteNumber,
+    });
+
+    return {
+      quoteNumber: mockQuoteNumber,
+      guid: undefined,
+    };
+  }
+
+  async updateQuote(quoteData: {
+    evrakSeri: string;
+    evrakSira: number;
+    cariCode: string;
+    validityDate: Date;
+    description: string;
+    documentNo?: string;
+    responsibleCode?: string;
+    paymentPlanNo?: number | null;
+    items: Array<{
+      productCode: string;
+      quantity: number;
+      unitPrice: number;
+      vatRate: number;
+      lineDescription?: string;
+      priceListNo?: number;
+    }>;
+  }): Promise<{ quoteNumber: string }> {
+    console.log('[MOCK] Teklif guncelleme:', {
+      ...quoteData,
+    });
+    return {
+      quoteNumber: `${quoteData.evrakSeri}-${quoteData.evrakSira}`,
+    };
+  }
+  async getQuoteLines(params: { evrakSeri: string; evrakSira: number }): Promise<any[]> {
+    console.log('[MOCK] Teklif satirlari isteniyor:', params);
+    return [];
+  }
+
+  async getQuoteBelgeNos(pairs: Array<{ evrakSeri: string; evrakSira: number }>): Promise<Map<string, string>> {
+    console.log('[MOCK] Teklif belge no listesi isteniyor:', pairs);
+    return new Map();
+  }
+
+  async getCustomerQuoteHistory(params: {
+    cariCode: string;
+    productCodes: string[];
+    limit: number;
+  }): Promise<Array<import('../types').MikroCustomerQuoteHistory>> {
+    console.log('[MOCK] Musteri teklif gecmisi isteniyor:', params);
+    return [];
+  }
+
+  async getQuoteLineGuids(params: { evrakSeri: string; evrakSira: number }): Promise<Array<{
+    satirNo: number;
+    guid: string;
+    productCode: string;
+    unitPrice: number;
+    quantity: number;
+  }>> {
+    console.log('[MOCK] Teklif guid listesi isteniyor:', params);
+    return [];
+  }
+
+  async closeQuoteLines(params: {
+    evrakSeri: string;
+    evrakSira: number;
+    lines: Array<{ satirNo: number; reason: string }>;
+  }): Promise<number> {
+    console.log('[MOCK] Teklif satir kapatma istendi:', params);
+    return 0;
+  }
+
+  async reopenQuoteLines(params: {
+    evrakSeri: string;
+    evrakSira: number;
+    lines: Array<{ satirNo: number }>;
+  }): Promise<number> {
+    console.log('[MOCK] Teklif satir acma istendi:', params);
+    return 0;
+  }
+
+  async updateOrderLines(params: {
+    orderNumber: string;
+    items: Array<{
+      existingProductCode?: string;
+      productCode: string;
+      quantity: number;
+      unitPrice: number;
+      vatRate: number;
+      lineDescription?: string;
+    }>;
+    documentDescription?: string;
+  }): Promise<void> {
+    console.log('[MOCK] Siparis satir guncelleme istendi:', params);
+  }
+
   async ensureCariExists(cariData: {
     cariCode: string;
     unvan: string;
@@ -546,3 +800,9 @@ export class MikroMockService {
 }
 
 export default new MikroMockService();
+
+
+
+
+
+

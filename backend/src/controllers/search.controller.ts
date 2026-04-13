@@ -18,6 +18,43 @@ export const getStockColumns = async (req: Request, res: Response) => {
 };
 
 /**
+ * GET /api/search/stocks/units
+ * Stok birimlerini (birim1 + birim2) döndürür
+ */
+export const getStockUnits = async (req: Request, res: Response) => {
+  try {
+    const [unitRows, unit2Rows] = await Promise.all([
+      prisma.product.findMany({
+        select: { unit: true },
+        distinct: ['unit'],
+      }),
+      prisma.product.findMany({
+        select: { unit2: true },
+        distinct: ['unit2'],
+        where: { unit2: { not: null } },
+      }),
+    ]);
+
+    const units = new Set<string>();
+    unitRows.forEach((row) => {
+      if (row.unit) units.add(row.unit.trim());
+    });
+    unit2Rows.forEach((row) => {
+      if (row.unit2) units.add(row.unit2.trim());
+    });
+
+    const sorted = Array.from(units)
+      .filter(Boolean)
+      .sort((a, b) => a.localeCompare(b, 'tr'));
+
+    res.json({ units: sorted });
+  } catch (error: any) {
+    console.error('Stok birimleri alınırken hata:', error);
+    res.status(500).json({ message: 'Stok birimleri alınamadı', error: error.message });
+  }
+};
+
+/**
  * GET /api/search/customers/columns
  * Cari F10 için tüm mevcut kolonları döndürür
  */
@@ -57,6 +94,26 @@ export const searchStocks = async (req: Request, res: Response) => {
   } catch (error: any) {
     console.error('Stok arama hatası:', error);
     res.status(500).json({ message: 'Stok araması yapılamadı', error: error.message });
+  }
+};
+
+/**
+ * POST /api/search/stocks/by-codes
+ * Belirli stok kodlarÄ±nÄ±n F10 verilerini getirir
+ * Body: { codes: string[] }
+ */
+export const getStocksByCodes = async (req: Request, res: Response) => {
+  try {
+    const { codes } = req.body as { codes?: string[] };
+    if (!Array.isArray(codes) || codes.length === 0) {
+      return res.json({ success: true, data: [] });
+    }
+
+    const result = await stockF10Service.getStocksByCodes(codes);
+    res.json({ success: true, data: result, total: result.length });
+  } catch (error: any) {
+    console.error('Stok kodlarÄ± getirilirken hata:', error);
+    res.status(500).json({ message: 'Stok kodlarÄ± alÄ±namadÄ±', error: error.message });
   }
 };
 
@@ -110,7 +167,7 @@ export const getSearchPreferences = async (req: Request, res: Response) => {
         data: {
           userId,
           stockColumns: ['msg_S_0078', 'msg_S_0870', 'KDV Oranı', 'Güncel Maliyet + Kdv.', 'Merkez Depo', 'Toplam Satılabilir'],
-          customerColumns: ['msg_S_1032', 'msg_S_1033', 'IL', 'ILCE', 'Telefon', 'SEKTOR KODU', 'msg_S_1530']
+          customerColumns: ['msg_S_1032', 'msg_S_1033', 'IL', 'ILCE', 'Telefon', 'Vergi No', 'SEKTOR KODU', 'msg_S_1530']
         }
       });
     }

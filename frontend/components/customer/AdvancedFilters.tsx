@@ -1,12 +1,13 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
 
 interface AdvancedFiltersProps {
   onFilterChange: (filters: FilterState) => void;
   onReset: () => void;
+  allowedPriceTypes?: Array<'invoiced' | 'white'>;
 }
 
 export interface FilterState {
@@ -18,171 +19,175 @@ export interface FilterState {
   priceType: 'invoiced' | 'white';
 }
 
-export function AdvancedFilters({ onFilterChange, onReset }: AdvancedFiltersProps) {
+export function AdvancedFilters({ onFilterChange, onReset, allowedPriceTypes }: AdvancedFiltersProps) {
   const [isExpanded, setIsExpanded] = useState(false);
+  const allowedTypes = (allowedPriceTypes && allowedPriceTypes.length > 0
+    ? allowedPriceTypes
+    : ['invoiced', 'white']) as Array<'invoiced' | 'white'>;
+
+  const defaultPriceType: FilterState['priceType'] = allowedTypes.includes('invoiced') ? 'invoiced' : 'white';
+  const showPriceTypeSelector = allowedTypes.length > 1;
+
   const [filters, setFilters] = useState<FilterState>({
     sortBy: 'none',
-    priceType: 'invoiced',
+    priceType: defaultPriceType,
   });
 
+  useEffect(() => {
+    if (!allowedTypes.includes(filters.priceType)) {
+      const nextFilters = { ...filters, priceType: defaultPriceType };
+      setFilters(nextFilters);
+      onFilterChange(nextFilters);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allowedTypes.join('|')]);
+
   const handleFilterChange = (key: keyof FilterState, value: any) => {
-    const newFilters = { ...filters, [key]: value };
-    setFilters(newFilters);
-    onFilterChange(newFilters);
+    const nextFilters = { ...filters, [key]: value };
+    setFilters(nextFilters);
+    onFilterChange(nextFilters);
   };
 
   const handleReset = () => {
     const resetFilters: FilterState = {
       sortBy: 'none',
-      priceType: 'invoiced',
+      priceType: defaultPriceType,
     };
     setFilters(resetFilters);
     onReset();
     onFilterChange(resetFilters);
   };
 
-  const hasActiveFilters = filters.minPrice || filters.maxPrice || filters.minStock || filters.maxStock || filters.sortBy !== 'none';
+  const hasActiveFilters =
+    typeof filters.minPrice === 'number' ||
+    typeof filters.maxPrice === 'number' ||
+    typeof filters.minStock === 'number' ||
+    typeof filters.maxStock === 'number' ||
+    filters.sortBy !== 'none';
+
+  const priceTypeLabel = filters.priceType === 'invoiced' ? 'Faturali' : 'Beyaz';
 
   return (
-    <div className="bg-white border-2 border-primary-100 rounded-xl shadow-lg p-4">
-      {/* Header */}
-      <div className="flex items-center justify-between mb-4">
-        <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">
-          <span className="text-xl">⚙️</span>
-          Gelişmiş Filtreler
-        </h3>
+    <div className="rounded-xl border border-primary-100 bg-white p-4 shadow-sm">
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="text-base font-semibold text-gray-900">Gelismis Filtreler</h3>
+          <p className="text-xs text-gray-500">Sonuclari fiyat, stok ve siralamaya gore daraltin.</p>
+        </div>
         <button
-          onClick={() => setIsExpanded(!isExpanded)}
-          className="text-sm text-primary-600 hover:text-primary-700 font-semibold flex items-center gap-1"
+          onClick={() => setIsExpanded((prev) => !prev)}
+          className="rounded-md border border-gray-200 px-3 py-1.5 text-xs font-semibold text-primary-700 hover:bg-primary-50"
         >
-          {isExpanded ? '▲ Gizle' : '▼ Göster'}
+          {isExpanded ? 'Filtreleri Gizle' : 'Filtreleri Goster'}
         </button>
       </div>
 
       {isExpanded && (
-        <div className="space-y-4 animate-fade-in">
-          {/* Sorting */}
+        <div className="mt-4 space-y-4">
           <div>
-            <label className="block text-sm font-semibold text-gray-900 mb-2 flex items-center gap-2">
-              <span>🔄</span>
-              Sıralama
-            </label>
+            <label className="mb-2 block text-sm font-semibold text-gray-800">Siralama</label>
             <select
               value={filters.sortBy}
               onChange={(e) => handleFilterChange('sortBy', e.target.value)}
-              className="input w-full h-11 text-sm border-2 border-gray-200 focus:border-primary-500 rounded-lg shadow-sm"
+              className="input h-11 w-full border-2 border-gray-200"
             >
-              <option value="none">Varsayılan</option>
-              <option value="name-asc">İsim (A-Z)</option>
-              <option value="name-desc">İsim (Z-A)</option>
-              <option value="price-asc">Fiyat (Düşük → Yüksek)</option>
-              <option value="price-desc">Fiyat (Yüksek → Düşük)</option>
-              <option value="stock-asc">Stok (Az → Çok)</option>
-              <option value="stock-desc">Stok (Çok → Az)</option>
+              <option value="none">Varsayilan</option>
+              <option value="name-asc">Isim (A-Z)</option>
+              <option value="name-desc">Isim (Z-A)</option>
+              <option value="price-asc">Fiyat (Dusukten Yuksege)</option>
+              <option value="price-desc">Fiyat (Yuksekten Dusuge)</option>
+              <option value="stock-asc">Stok (Azdan Coga)</option>
+              <option value="stock-desc">Stok (Cogdan Aza)</option>
             </select>
           </div>
 
-          {/* Price Type for Sorting */}
-          <div>
-            <label className="block text-sm font-semibold text-gray-900 mb-2 flex items-center gap-2">
-              <span>💰</span>
-              Fiyat Türü (Sıralama için)
-            </label>
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                onClick={() => handleFilterChange('priceType', 'invoiced')}
-                className={`py-2 px-3 rounded-lg text-sm font-semibold transition-all ${
-                  filters.priceType === 'invoiced'
-                    ? 'bg-primary-600 text-white'
-                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                }`}
-              >
-                📄 Faturalı
-              </button>
-              <button
-                onClick={() => handleFilterChange('priceType', 'white')}
-                className={`py-2 px-3 rounded-lg text-sm font-semibold transition-all ${
-                  filters.priceType === 'white'
-                    ? 'bg-gray-700 text-white'
-                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                }`}
-              >
-                ⚪ Beyaz
-              </button>
+          {showPriceTypeSelector && (
+            <div>
+              <label className="mb-2 block text-sm font-semibold text-gray-800">Fiyat Turu</label>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  onClick={() => handleFilterChange('priceType', 'invoiced')}
+                  className={`rounded-lg py-2 text-sm font-semibold ${
+                    filters.priceType === 'invoiced'
+                      ? 'bg-primary-600 text-white'
+                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                  }`}
+                >
+                  Faturali
+                </button>
+                <button
+                  onClick={() => handleFilterChange('priceType', 'white')}
+                  className={`rounded-lg py-2 text-sm font-semibold ${
+                    filters.priceType === 'white' ? 'bg-gray-700 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                  }`}
+                >
+                  Beyaz
+                </button>
+              </div>
             </div>
-          </div>
+          )}
 
-          {/* Price Range */}
           <div>
-            <label className="block text-sm font-semibold text-gray-900 mb-2 flex items-center gap-2">
-              <span>💵</span>
-              Fiyat Aralığı ({filters.priceType === 'invoiced' ? 'Faturalı' : 'Beyaz'})
-            </label>
+            <label className="mb-2 block text-sm font-semibold text-gray-800">Fiyat Araligi ({priceTypeLabel})</label>
             <div className="grid grid-cols-2 gap-2">
               <Input
                 type="number"
                 placeholder="Min fiyat"
-                value={filters.minPrice || ''}
-                onChange={(e) => handleFilterChange('minPrice', e.target.value ? parseFloat(e.target.value) : undefined)}
-                className="h-11 text-sm border-2 border-gray-200 focus:border-primary-500 rounded-lg"
+                value={filters.minPrice ?? ''}
+                onChange={(e) => handleFilterChange('minPrice', e.target.value ? Number(e.target.value) : undefined)}
+                className="h-11 border-2 border-gray-200"
               />
               <Input
                 type="number"
                 placeholder="Max fiyat"
-                value={filters.maxPrice || ''}
-                onChange={(e) => handleFilterChange('maxPrice', e.target.value ? parseFloat(e.target.value) : undefined)}
-                className="h-11 text-sm border-2 border-gray-200 focus:border-primary-500 rounded-lg"
+                value={filters.maxPrice ?? ''}
+                onChange={(e) => handleFilterChange('maxPrice', e.target.value ? Number(e.target.value) : undefined)}
+                className="h-11 border-2 border-gray-200"
               />
             </div>
           </div>
 
-          {/* Stock Range */}
           <div>
-            <label className="block text-sm font-semibold text-gray-900 mb-2 flex items-center gap-2">
-              <span>📦</span>
-              Stok Aralığı
-            </label>
+            <label className="mb-2 block text-sm font-semibold text-gray-800">Stok Araligi</label>
             <div className="grid grid-cols-2 gap-2">
               <Input
                 type="number"
                 placeholder="Min stok"
-                value={filters.minStock || ''}
-                onChange={(e) => handleFilterChange('minStock', e.target.value ? parseInt(e.target.value) : undefined)}
-                className="h-11 text-sm border-2 border-gray-200 focus:border-primary-500 rounded-lg"
+                value={filters.minStock ?? ''}
+                onChange={(e) => handleFilterChange('minStock', e.target.value ? Number(e.target.value) : undefined)}
+                className="h-11 border-2 border-gray-200"
               />
               <Input
                 type="number"
                 placeholder="Max stok"
-                value={filters.maxStock || ''}
-                onChange={(e) => handleFilterChange('maxStock', e.target.value ? parseInt(e.target.value) : undefined)}
-                className="h-11 text-sm border-2 border-gray-200 focus:border-primary-500 rounded-lg"
+                value={filters.maxStock ?? ''}
+                onChange={(e) => handleFilterChange('maxStock', e.target.value ? Number(e.target.value) : undefined)}
+                className="h-11 border-2 border-gray-200"
               />
             </div>
           </div>
 
-          {/* Reset Button */}
+          {hasActiveFilters && (
+            <div className="rounded-lg border border-primary-100 bg-primary-50 p-3 text-xs text-primary-900">
+              <div className="mb-1 font-semibold">Aktif filtreler</div>
+              <div className="flex flex-wrap gap-2">
+                {typeof filters.minPrice === 'number' && <span>Min fiyat: {filters.minPrice}</span>}
+                {typeof filters.maxPrice === 'number' && <span>Max fiyat: {filters.maxPrice}</span>}
+                {typeof filters.minStock === 'number' && <span>Min stok: {filters.minStock}</span>}
+                {typeof filters.maxStock === 'number' && <span>Max stok: {filters.maxStock}</span>}
+                {filters.sortBy !== 'none' && <span>Siralama: {getSortLabel(filters.sortBy)}</span>}
+              </div>
+            </div>
+          )}
+
           {hasActiveFilters && (
             <Button
               variant="ghost"
               onClick={handleReset}
-              className="w-full text-red-600 hover:text-red-700 hover:bg-red-50 border-2 border-red-200 font-semibold"
+              className="w-full border border-red-200 text-red-700 hover:bg-red-50 hover:text-red-700"
             >
-              ✕ Gelişmiş Filtreleri Temizle
+              Gelismis Filtreleri Temizle
             </Button>
-          )}
-
-          {/* Active Filters Summary */}
-          {hasActiveFilters && (
-            <div className="bg-primary-50 border-2 border-primary-200 rounded-lg p-3 text-sm">
-              <p className="font-semibold text-primary-900 mb-1">Aktif Filtreler:</p>
-              <ul className="space-y-0.5 text-primary-800">
-                {filters.minPrice && <li>• Min Fiyat: ₺{filters.minPrice}</li>}
-                {filters.maxPrice && <li>• Max Fiyat: ₺{filters.maxPrice}</li>}
-                {filters.minStock && <li>• Min Stok: {filters.minStock}</li>}
-                {filters.maxStock && <li>• Max Stok: {filters.maxStock}</li>}
-                {filters.sortBy !== 'none' && <li>• Sıralama: {getSortLabel(filters.sortBy)}</li>}
-              </ul>
-            </div>
           )}
         </div>
       )}
@@ -190,14 +195,16 @@ export function AdvancedFilters({ onFilterChange, onReset }: AdvancedFiltersProp
   );
 }
 
-function getSortLabel(sortBy: string): string {
-  const labels: Record<string, string> = {
-    'name-asc': 'İsim (A-Z)',
-    'name-desc': 'İsim (Z-A)',
-    'price-asc': 'Fiyat (Düşük → Yüksek)',
-    'price-desc': 'Fiyat (Yüksek → Düşük)',
-    'stock-asc': 'Stok (Az → Çok)',
-    'stock-desc': 'Stok (Çok → Az)',
+function getSortLabel(sortBy: FilterState['sortBy']): string {
+  const labels: Record<FilterState['sortBy'], string> = {
+    'name-asc': 'Isim (A-Z)',
+    'name-desc': 'Isim (Z-A)',
+    'price-asc': 'Fiyat (Dusukten Yuksege)',
+    'price-desc': 'Fiyat (Yuksekten Dusuge)',
+    'stock-asc': 'Stok (Azdan Coga)',
+    'stock-desc': 'Stok (Cogdan Aza)',
+    none: 'Varsayilan',
   };
-  return labels[sortBy] || sortBy;
+
+  return labels[sortBy];
 }

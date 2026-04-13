@@ -2,20 +2,42 @@ import mikroFactory from './mikroFactory.service';
 
 interface StockF10SearchParams {
   searchTerm?: string;
+  productCodes?: string[];
   limit?: number;
   offset?: number;
 }
 
+const buildSqlSearchTokens = (value?: string) => {
+  if (!value) return [] as string[];
+  return value
+    .replace(/\*/g, ' ')
+    .split(/\s+/)
+    .map((token) => token.trim())
+    .filter(Boolean);
+};
+
 class StockF10Service {
   // Stok F10 sorgusunu çalıştırır
   async searchStocks(params: StockF10SearchParams = {}): Promise<any> {
-    const { searchTerm, limit = 100, offset = 0 } = params;
+    const { searchTerm, productCodes, limit = 100, offset = 0 } = params;
 
     // WHERE koşulu - arama terimi varsa ekle
     let whereClause = "sto_isim NOT LIKE '' and sto_pasif_fl='0'";
-    if (searchTerm && searchTerm.trim()) {
-      const escapedTerm = searchTerm.trim().replace(/'/g, "''");
-      whereClause += ` AND (sto_isim LIKE '%${escapedTerm}%' OR sto_kod LIKE '%${escapedTerm}%')`;
+    if (productCodes && productCodes.length > 0) {
+      const safeCodes = productCodes
+        .map((code) => code.replace(/'/g, "''"))
+        .map((code) => `'${code}'`)
+        .join(', ');
+      whereClause += ` AND sto_kod IN (${safeCodes})`;
+    } else if (searchTerm && searchTerm.trim()) {
+      const tokens = buildSqlSearchTokens(searchTerm);
+      if (tokens.length > 0) {
+        const tokenClauses = tokens.map((token) => {
+          const escaped = token.replace(/'/g, "''");
+          return `(sto_isim LIKE '%${escaped}%' OR sto_kod LIKE '%${escaped}%')`;
+        });
+        whereClause += ` AND ${tokenClauses.join(' AND ')}`;
+      }
     }
 
     const query = `
@@ -153,6 +175,11 @@ class StockF10Service {
   }
 
   // Tüm mevcut kolonları döndürür (UI'da kolon seçici için)
+  async getStocksByCodes(productCodes: string[]): Promise<any> {
+    const safeLimit = Math.max(productCodes.length, 1);
+    return this.searchStocks({ productCodes, limit: safeLimit, offset: 0 });
+  }
+
   getAvailableColumns(): string[] {
     return [
       'msg_S_0088', // Guid

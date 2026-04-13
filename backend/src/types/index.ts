@@ -25,16 +25,26 @@ export interface UserResponse {
   role: string;
   customerType?: string;
   mikroCariCode?: string;
+  priceVisibility?: string;
+  vatDisplayPreference?: string;
+  parentCustomerId?: string;
 }
 
 export interface CreateCustomerRequest {
-  email: string;
+  email?: string;
   password: string;
   name: string;
   customerType: 'BAYI' | 'PERAKENDE' | 'VIP' | 'OZEL';
   mikroCariCode: string;
   invoicedPriceListNo?: number | null;
   whitePriceListNo?: number | null;
+  priceVisibility?: 'INVOICED_ONLY' | 'WHITE_ONLY' | 'BOTH';
+  useLastPrices?: boolean;
+  lastPriceGuardType?: 'COST' | 'PRICE_LIST';
+  lastPriceGuardInvoicedListNo?: number | null;
+  lastPriceGuardWhiteListNo?: number | null;
+  lastPriceCostBasis?: 'CURRENT_COST' | 'LAST_ENTRY';
+  lastPriceMinCostPercent?: number;
 }
 
 export interface PriceListPair {
@@ -61,8 +71,12 @@ export interface MikroProduct {
   id: string;
   code: string;
   name: string;
+  foreignName?: string | null;
+  brandCode?: string | null;
   categoryId: string;
   unit: string;
+  unit2?: string | null;
+  unit2Factor?: number | null;
   vatRate: number;
   lastEntryPrice?: number;
   lastEntryDate?: Date;
@@ -84,8 +98,37 @@ export interface MikroSalesMovement {
   totalQuantity: number;
 }
 
+export interface MikroCustomerSaleMovement {
+  productCode: string;
+  saleDate: Date;
+  quantity: number;
+  unitPrice: number;
+  lineTotal: number;
+  vatAmount: number;
+  vatRate: number;
+  vatZeroed: boolean;
+  orderNumber?: string | null;
+  documentNo?: string | null;
+}
+
+export interface MikroCustomerQuoteHistory {
+  productCode: string;
+  quoteDate: Date;
+  quantity: number;
+  unitPrice: number;
+  documentNo?: string | null;
+  quoteNumber?: string | null;
+}
+
 export interface MikroPendingOrder {
   productCode: string;
+  quantity: number;
+  type: 'SALES' | 'PURCHASE';
+}
+
+export interface MikroPendingOrderByWarehouse {
+  productCode: string;
+  warehouseCode: string;
   quantity: number;
   type: 'SALES' | 'PURCHASE';
 }
@@ -99,9 +142,18 @@ export interface MikroCari {
   isLocked: boolean;
   groupCode?: string;
   sectorCode?: string;
-  paymentTerm?: number;
+  paymentTerm?: number | null;
+  paymentPlanNo?: number | null;
+  paymentPlanCode?: string | null;
+  paymentPlanName?: string | null;
   hasEInvoice: boolean;
   balance: number;
+}
+
+export interface MikroCariPersonel {
+  code: string;
+  name: string;
+  surname: string;
 }
 
 // ==================== PRODUCT TYPES ====================

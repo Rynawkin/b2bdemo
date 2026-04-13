@@ -1,32 +1,105 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import toast from 'react-hot-toast';
+import { Product } from '@/types';
 import { useCartStore } from '@/lib/store/cartStore';
 import { useAuthStore } from '@/lib/store/authStore';
 import customerApi from '@/lib/api/customer';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
-import { LogoLink } from '@/components/ui/Logo';
+import { Input } from '@/components/ui/Input';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { MobileMenu } from '@/components/ui/MobileMenu';
+import { ProductRecommendations } from '@/components/customer/ProductRecommendations';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { useConfirmDialog } from '@/lib/hooks/useConfirmDialog';
 import { formatCurrency } from '@/lib/utils/format';
+import { getDisplayPrice, getVatLabel, getVatStatusLabel } from '@/lib/utils/vatDisplay';
+import { getAllowedPriceTypes, getDefaultPriceType } from '@/lib/utils/priceVisibility';
+
+type RecommendationGroup = {
+  baseProduct: { id: string; name: string; mikroCode: string };
+  products: Product[];
+};
 
 export default function CartPage() {
   const router = useRouter();
-  const { user, loadUserFromStorage, logout } = useAuthStore();
-  const { cart, fetchCart, removeItem, updateQuantity } = useCartStore();
+  const { user, loadUserFromStorage } = useAuthStore();
+  const { cart, fetchCart, removeItem, updateQuantity, updateItemNote, addToCart } = useCartStore();
   const [isCreatingOrder, setIsCreatingOrder] = useState(false);
+  const [lineNotes, setLineNotes] = useState<Record<string, string>>({});
+  const [customerOrderNumber, setCustomerOrderNumber] = useState('');
+  const [deliveryLocation, setDeliveryLocation] = useState('');
+  const [recommendationGroups, setRecommendationGroups] = useState<RecommendationGroup[]>([]);
+  const [isLoadingRecommendations, setIsLoadingRecommendations] = useState(false);
   const { dialogState, isLoading, showConfirmDialog, closeDialog } = useConfirmDialog();
+  const isSubUser = Boolean(user?.parentCustomerId);
+  const effectiveVisibility = isSubUser
+    ? (user?.priceVisibility === 'WHITE_ONLY' ? 'WHITE_ONLY' : 'INVOICED_ONLY')
+    : user?.priceVisibility;
+  const vatDisplayPreference = user?.vatDisplayPreference || 'WITHOUT_VAT';
+  const allowedPriceTypes = useMemo(() => getAllowedPriceTypes(effectiveVisibility), [effectiveVisibility]);
+  const defaultPriceType = getDefaultPriceType(effectiveVisibility);
 
   useEffect(() => {
     loadUserFromStorage();
     fetchCart();
   }, [loadUserFromStorage, fetchCart]);
+
+  useEffect(() => {
+    if (!cart?.items) return;
+    const nextNotes: Record<string, string> = {};
+    cart.items.forEach((item) => {
+      nextNotes[item.id] = item.lineNote || '';
+    });
+    setLineNotes(nextNotes);
+  }, [cart?.items]);
+
+  const cartSignature = useMemo(() => {
+    if (!cart?.items || cart.items.length === 0) return '';
+    const ids = cart.items.map((item) => item.product.id).sort();
+    return ids.join('|');
+  }, [cart?.items]);
+
+  const fetchRecommendations = async () => {
+    if (!cartSignature) {
+      setRecommendationGroups([]);
+      return;
+    }
+    setIsLoadingRecommendations(true);
+    try {
+      const data = await customerApi.getCartRecommendations();
+      setRecommendationGroups(data.groups || []);
+    } catch (error) {
+      console.error('Oneriler yuklenemedi:', error);
+      setRecommendationGroups([]);
+    } finally {
+      setIsLoadingRecommendations(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchRecommendations();
+  }, [cartSignature]);
+
+  const handleRecommendationAdd = async (productId: string) => {
+    try {
+      const safePriceType = allowedPriceTypes.includes(defaultPriceType)
+        ? defaultPriceType
+        : (allowedPriceTypes[0] || 'INVOICED');
+      await addToCart({
+        productId,
+        quantity: 1,
+        priceType: safePriceType,
+        priceMode: 'LIST',
+      });
+      toast.success('Urun sepete eklendi!');
+    } catch (error: any) {
+      toast.error(error.response?.data?.error || 'Sepete eklenirken hata olustu');
+    }
+  };
 
   const handleRemove = async (itemId: string) => {
     await showConfirmDialog(
@@ -49,35 +122,67 @@ export default function CartPage() {
     await updateQuantity(itemId, newQuantity);
   };
 
+  const handleLineNoteChange = (itemId: string, value: string) => {
+    setLineNotes((prev) => ({ ...prev, [itemId]: value }));
+  };
+
+  const handleLineNoteBlur = async (itemId: string, currentNote?: string | null) => {
+    const rawNote = lineNotes[itemId] ?? '';
+    const trimmed = rawNote.trim();
+    const previous = (currentNote || '').trim();
+    if (trimmed === previous) return;
+    try {
+      await updateItemNote(itemId, trimmed ? trimmed : null);
+    } catch (error: any) {
+      toast.error(error.response?.data?.error || 'Not guncellenemedi');
+    }
+  };
+
   const handleCreateOrder = async () => {
     if (!cart || cart.items.length === 0) {
-      toast.error('Sepetiniz boş!');
+      toast.error('Sepetiniz bos!');
       return;
     }
 
     await showConfirmDialog(
       {
-        title: 'Siparişi Onayla',
-        message: `Siparişinizi oluşturmak istediğinizden emin misiniz?\n\nToplam: ${formatCurrency(cart.total)}`,
-        confirmLabel: 'Evet, Oluştur',
-        cancelLabel: 'İptal',
+        title: isSubUser ? 'Talebi Onayla' : 'Siparisi Onayla',
+        message: `${isSubUser ? 'Talebinizi gondermek' : 'Siparisinizi olusturmak'} istediginizden emin misiniz?
+
+Toplam: ${formatCurrency(cart.total)}`,
+        confirmLabel: isSubUser ? 'Evet, Gonder' : 'Evet, Olustur',
+        cancelLabel: 'Iptal',
         type: 'success',
       },
       async () => {
         setIsCreatingOrder(true);
         try {
-          const result = await customerApi.createOrder();
-          toast.success(`Sipariş oluşturuldu! 🎉\nSipariş No: ${result.orderNumber}`, {
-            duration: 4000,
-          });
-          router.push('/my-orders');
+          if (isSubUser) {
+            await customerApi.createOrderRequest();
+            await fetchCart();
+            toast.success('Talep gonderildi.');
+            router.push('/order-requests');
+          } else {
+            const result = await customerApi.createOrder({
+              customerOrderNumber: customerOrderNumber.trim() || undefined,
+              deliveryLocation: deliveryLocation.trim() || undefined,
+            });
+            await fetchCart();
+            setCustomerOrderNumber('');
+            setDeliveryLocation('');
+            toast.success(`Siparis olusturuldu!
+Siparis No: ${result.orderNumber}`, {
+              duration: 4000,
+            });
+            router.push('/my-orders');
+          }
         } catch (error: any) {
-          if (error.response?.data?.error === 'INSUFFICIENT_STOCK') {
-            toast.error('Stok yetersiz!\n' + error.response.data.details.join('\n'), {
+          if (!isSubUser && error.response?.data?.error === 'INSUFFICIENT_STOCK') {
+            toast.error(`Stok yetersiz!\n${error.response.data.details.join('\n')}`, {
               duration: 5000,
             });
           } else {
-            toast.error(error.response?.data?.error || 'Sipariş oluşturulurken hata oluştu');
+            toast.error(error.response?.data?.error || (isSubUser ? 'Talep gonderilemedi' : 'Siparis olusturulurken hata olustu'));
           }
         } finally {
           setIsCreatingOrder(false);
@@ -88,83 +193,7 @@ export default function CartPage() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 via-blue-50 to-gray-100">
-      <header className="bg-gradient-to-r from-primary-700 via-primary-600 to-primary-700 shadow-xl border-b-4 border-primary-800">
-        <div className="container-custom py-5">
-          <div className="flex justify-between items-center">
-            <div className="flex items-center gap-6">
-              <LogoLink href="/products" variant="light" />
-              <div>
-                <h1 className="text-2xl font-bold text-white flex items-center gap-3">
-                  <span className="text-3xl">🛒</span>
-                  Sepetim
-                </h1>
-                <p className="text-sm text-primary-100 font-medium">
-                  {cart && cart.items.length > 0 ? (
-                    <>
-                      {cart.items.filter(i => i.priceType === 'INVOICED').length > 0 && (
-                        <span>📄 {cart.items.filter(i => i.priceType === 'INVOICED').length} Faturalı</span>
-                      )}
-                      {cart.items.filter(i => i.priceType === 'INVOICED').length > 0 && cart.items.filter(i => i.priceType === 'WHITE').length > 0 && (
-                        <span> • </span>
-                      )}
-                      {cart.items.filter(i => i.priceType === 'WHITE').length > 0 && (
-                        <span>⚪ {cart.items.filter(i => i.priceType === 'WHITE').length} Beyaz</span>
-                      )}
-                      <span> • {formatCurrency(cart.total)}</span>
-                    </>
-                  ) : (
-                    'Sepetiniz boş'
-                  )}
-                </p>
-              </div>
-            </div>
-            {/* Desktop Navigation */}
-            <div className="hidden lg:flex gap-3">
-              <Button
-                variant="secondary"
-                onClick={() => router.push('/products')}
-                className="bg-white text-primary-700 hover:bg-primary-50 border-0 shadow-md font-semibold"
-              >
-                🛍️ Alışverişe Devam
-              </Button>
-              <Button
-                variant="secondary"
-                onClick={() => router.push('/my-orders')}
-                className="bg-white text-primary-700 hover:bg-primary-50 border-0 shadow-md font-semibold"
-              >
-                📦 Siparişlerim
-              </Button>
-              <Button
-                variant="secondary"
-                onClick={() => router.push('/profile')}
-                className="bg-white text-primary-700 hover:bg-primary-50 border-0 shadow-md font-semibold"
-              >
-                👤 Profil
-              </Button>
-              <Button
-                variant="ghost"
-                onClick={() => { logout(); router.push('/login'); }}
-                className="text-white hover:bg-primary-800 border border-white/30"
-              >
-                Çıkış
-              </Button>
-            </div>
 
-            {/* Mobile Navigation */}
-            <MobileMenu
-              items={[
-                { label: 'Ürünler', href: '/products', icon: '🛍️' },
-                { label: 'Sepetim', href: '/cart', icon: '🛒' },
-                { label: 'Siparişlerim', href: '/my-orders', icon: '📦' },
-                { label: 'Profilim', href: '/profile', icon: '👤' },
-                { label: 'Tercihler', href: '/preferences', icon: '⚙️' },
-              ]}
-              user={user}
-              onLogout={() => { logout(); router.push('/login'); }}
-            />
-          </div>
-        </div>
-      </header>
 
       <div className="container-custom py-8">
         <div className="max-w-4xl mx-auto">
@@ -215,11 +244,11 @@ export default function CartPage() {
                           <div className="flex flex-col sm:flex-row gap-4">
                             {/* Product Image */}
                             {item.product.imageUrl && (
-                              <div className="w-20 h-20 rounded-lg overflow-hidden bg-gray-200 flex-shrink-0">
+                              <div className="w-20 h-20 rounded-lg overflow-hidden bg-white border border-gray-200 flex-shrink-0">
                                 <img
                                   src={item.product.imageUrl}
                                   alt={item.product.name}
-                                  className="w-full h-full object-cover"
+                                  className="w-full h-full object-contain"
                                 />
                               </div>
                             )}
@@ -269,12 +298,13 @@ export default function CartPage() {
                               {/* Price */}
                               <div className="flex justify-between sm:block sm:text-right sm:min-w-[120px]">
                                 <p className="text-sm text-gray-600">
-                                  {formatCurrency(item.unitPrice)} / adet<span className="text-xs ml-1">(+KDV)</span>
+                                  {formatCurrency(getDisplayPrice(item.unitPrice, item.vatRate, 'INVOICED', vatDisplayPreference))} / adet
+                                  <span className="text-xs ml-1">({getVatLabel('INVOICED', vatDisplayPreference)})</span>
                                 </p>
                                 <p className="text-xl sm:text-2xl font-bold text-blue-600">
-                                  {formatCurrency(item.totalPrice)}
+                                  {formatCurrency(getDisplayPrice(item.totalPrice, item.vatRate, 'INVOICED', vatDisplayPreference))}
                                 </p>
-                                <p className="text-xs text-gray-500">KDV Hariç</p>
+                                <p className="text-xs text-gray-500">{getVatStatusLabel(vatDisplayPreference)}</p>
                               </div>
 
                               {/* Delete Button - Desktop */}
@@ -289,6 +319,18 @@ export default function CartPage() {
                                 </svg>
                               </Button>
                             </div>
+                            <div className="mt-3">
+                              <label className="block text-xs text-gray-500 mb-1">Satir notu (opsiyonel)</label>
+                              <textarea
+                                value={lineNotes[item.id] ?? ''}
+                                onChange={(e) => handleLineNoteChange(item.id, e.target.value)}
+                                onBlur={() => handleLineNoteBlur(item.id, item.lineNote)}
+                                className="w-full rounded-lg border border-gray-200 p-2 text-xs"
+                                rows={2}
+                                placeholder="Marka, renk, teslimat notu..."
+                              />
+                            </div>
+
                           </div>
                         </div>
                       ))}
@@ -322,11 +364,11 @@ export default function CartPage() {
                           <div className="flex flex-col sm:flex-row gap-4">
                             {/* Product Image */}
                             {item.product.imageUrl && (
-                              <div className="w-20 h-20 rounded-lg overflow-hidden bg-gray-200 flex-shrink-0">
+                              <div className="w-20 h-20 rounded-lg overflow-hidden bg-white border border-gray-200 flex-shrink-0">
                                 <img
                                   src={item.product.imageUrl}
                                   alt={item.product.name}
-                                  className="w-full h-full object-cover"
+                                  className="w-full h-full object-contain"
                                 />
                               </div>
                             )}
@@ -396,6 +438,18 @@ export default function CartPage() {
                                 </svg>
                               </Button>
                             </div>
+                            <div className="mt-3">
+                              <label className="block text-xs text-gray-500 mb-1">Satir notu (opsiyonel)</label>
+                              <textarea
+                                value={lineNotes[item.id] ?? ''}
+                                onChange={(e) => handleLineNoteChange(item.id, e.target.value)}
+                                onBlur={() => handleLineNoteBlur(item.id, item.lineNote)}
+                                className="w-full rounded-lg border border-gray-200 p-2 text-xs"
+                                rows={2}
+                                placeholder="Marka, renk, teslimat notu..."
+                              />
+                            </div>
+
                           </div>
                         </div>
                       ))}
@@ -431,6 +485,28 @@ export default function CartPage() {
                   🗑️ Sepeti Temizle
                 </Button>
               </div>
+
+                            {isLoadingRecommendations ? (
+                <Card className="shadow-xl border-2 border-gray-200 bg-white">
+                  <div className="text-sm text-gray-500">Oneriler yukleniyor...</div>
+                </Card>
+              ) : recommendationGroups.length > 0 ? (
+                <div className="space-y-4">
+                  {recommendationGroups.map((group) => (
+                    <Card key={group.baseProduct.id} className="shadow-xl border-2 border-gray-200 bg-white">
+                      <ProductRecommendations
+                        products={group.products}
+                        title={`${group.baseProduct.mikroCode} - ${group.baseProduct.name} icin tamamlayici urunler`}
+                        icon="+"
+                        onProductClick={(item) => router.push(`/products/${item.id}`)}
+                        onAddToCart={handleRecommendationAdd}
+                        allowedPriceTypes={allowedPriceTypes}
+                        vatDisplayPreference={vatDisplayPreference}
+                      />
+                    </Card>
+                  ))}
+                </div>
+              ) : null}
 
               {/* Order Summary */}
               <Card className="shadow-xl border-2 border-green-100 bg-gradient-to-br from-white to-green-50">
@@ -471,13 +547,32 @@ export default function CartPage() {
                       </div>
                     </div>
 
-                    <Button
+                    {!isSubUser && (
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                        <Input
+                          label="Teslimat Birimi / Bolge (opsiyonel)"
+                          value={deliveryLocation}
+                          onChange={(e) => setDeliveryLocation(e.target.value)}
+                        />
+                        <Input
+                          label="Musteri Siparis No (opsiyonel)"
+                          value={customerOrderNumber}
+                          onChange={(e) => setCustomerOrderNumber(e.target.value)}
+                        />
+                      </div>
+                    )}
+
+                                        <Button
                       className="w-full bg-gradient-to-r from-green-600 to-green-700 hover:from-green-700 hover:to-green-800 text-white font-bold py-4 text-lg shadow-xl rounded-xl disabled:opacity-50 disabled:cursor-not-allowed"
                       onClick={handleCreateOrder}
                       isLoading={isCreatingOrder}
                       disabled={!cart || cart.items.length === 0 || isCreatingOrder}
                     >
-                      {isCreatingOrder ? '⏳ Oluşturuluyor...' : !cart || cart.items.length === 0 ? '🛒 Sepet Boş' : '✅ Siparişi Oluştur'}
+                      {isCreatingOrder
+                        ? (isSubUser ? 'Gonderiliyor...' : 'Olusturuluyor...')
+                        : !cart || cart.items.length === 0
+                          ? 'Sepet Bos'
+                          : (isSubUser ? 'Talep Gonder' : 'Siparisi Olustur')}
                     </Button>
 
                     <div className="mt-4 bg-blue-50 border-l-4 border-blue-500 p-4 rounded-lg">
@@ -486,12 +581,20 @@ export default function CartPage() {
                           <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
                         </svg>
                         <div className="text-xs text-blue-800">
-                          <p className="font-semibold mb-1">Sipariş Bilgilendirmesi</p>
-                          <ul className="space-y-1">
-                            <li>• Siparişiniz oluşturulduktan sonra admin onayı bekleyecektir</li>
-                            <li>• Faturalı ve beyaz ürünler ayrı siparişler olarak işlenir</li>
-                            <li>• Onaylanan siparişler en kısa sürede hazırlanacaktır</li>
-                          </ul>
+                          <p className="font-semibold mb-1">{isSubUser ? 'Talep Bilgilendirmesi' : 'Siparis Bilgilendirmesi'}</p>
+                          {isSubUser ? (
+                            <ul className="space-y-1">
+                              <li>? Talebiniz yonetici onayina gonderilir</li>
+                              <li>? Fiyat tipi secimi yonetici tarafindan yapilir</li>
+                              <li>? Onaylanan talepler siparise cevrilir</li>
+                            </ul>
+                          ) : (
+                            <ul className="space-y-1">
+                              <li>? Siparisiniz olusturulduktan sonra admin onayi bekler</li>
+                              <li>? Faturali ve beyaz urunler ayri siparisler olarak islenir</li>
+                              <li>? Onaylanan siparisler en kisa surede hazirlanir</li>
+                            </ul>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -518,3 +621,8 @@ export default function CartPage() {
     </div>
   );
 }
+
+
+
+
+

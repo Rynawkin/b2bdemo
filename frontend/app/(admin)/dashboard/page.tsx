@@ -10,14 +10,25 @@ import { usePermissions } from '@/hooks/usePermissions';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { formatCurrency, formatDate } from '@/lib/utils/format';
-import { AdminNavigation } from '@/components/layout/AdminNavigation';
 import { EkstreModal } from '@/components/admin/EkstreModal';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 
+type DashboardFilterPeriod = 'daily' | 'weekly' | 'monthly' | 'custom';
+
+const toDateInputValue = (value: Date) => {
+  const year = value.getFullYear();
+  const month = `${value.getMonth() + 1}`.padStart(2, '0');
+  const day = `${value.getDate()}`.padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
 export default function AdminDashboardPage() {
   const router = useRouter();
-  const { user, loadUserFromStorage, logout } = useAuthStore();
+  const { user, loadUserFromStorage } = useAuthStore();
   const { hasPermission, loading: permissionsLoading } = usePermissions();
+  const [selectedPeriod, setSelectedPeriod] = useState<DashboardFilterPeriod>('daily');
+  const [customStartDate, setCustomStartDate] = useState<string>(toDateInputValue(new Date()));
+  const [customEndDate, setCustomEndDate] = useState<string>(toDateInputValue(new Date()));
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSyncing, setIsSyncing] = useState(false);
@@ -91,13 +102,25 @@ export default function AdminDashboardPage() {
       return;
     }
 
+    if (selectedPeriod === 'custom' && (!customStartDate || !customEndDate)) {
+      return;
+    }
+
     fetchStats();
-  }, [user, router]);
+  }, [user, router, selectedPeriod, customStartDate, customEndDate]);
 
   const fetchStats = async () => {
     setIsLoading(true);
     try {
-      const data = await adminApi.getDashboardStats();
+      const data = await adminApi.getDashboardStats(
+        selectedPeriod === 'custom'
+          ? {
+              period: 'custom',
+              startDate: customStartDate,
+              endDate: customEndDate,
+            }
+          : { period: selectedPeriod }
+      );
       setStats(data);
     } catch (error) {
       console.error('Stats yüklenemedi:', error);
@@ -409,6 +432,17 @@ export default function AdminDashboardPage() {
     }
   };
 
+  const summaryPeriodLabel =
+    stats?.period === 'daily'
+      ? 'Gunluk'
+      : stats?.period === 'weekly'
+        ? 'Haftalik'
+        : stats?.period === 'monthly'
+          ? 'Aylik'
+          : stats?.period === 'custom'
+            ? 'Tarih Araligi'
+          : null;
+
   if (!user || isLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -421,14 +455,110 @@ export default function AdminDashboardPage() {
     <ErrorBoundary>
       <div className="min-h-screen bg-gray-50">
         {/* Navigation */}
-        <AdminNavigation />
 
       {/* Main Content */}
       <div className="container-custom py-8">
+        <Card className="mb-6 shadow-sm">
+          <div className="flex flex-col xl:flex-row xl:items-end gap-4">
+            <div className="flex flex-col gap-1">
+              <label className="text-sm font-medium text-gray-700">Donem</label>
+              <select
+                value={selectedPeriod}
+                onChange={(event) => setSelectedPeriod(event.target.value as DashboardFilterPeriod)}
+                className="px-3 py-2 border rounded-lg bg-white text-sm"
+              >
+                <option value="daily">Gunluk</option>
+                <option value="weekly">Haftalik</option>
+                <option value="monthly">Ay basindan beri</option>
+                <option value="custom">Tarih araligi</option>
+              </select>
+            </div>
+
+            {selectedPeriod === 'custom' && (
+              <>
+                <div className="flex flex-col gap-1">
+                  <label className="text-sm font-medium text-gray-700">Baslangic</label>
+                  <input
+                    type="date"
+                    value={customStartDate}
+                    onChange={(event) => setCustomStartDate(event.target.value)}
+                    className="px-3 py-2 border rounded-lg bg-white text-sm"
+                  />
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label className="text-sm font-medium text-gray-700">Bitis</label>
+                  <input
+                    type="date"
+                    value={customEndDate}
+                    onChange={(event) => setCustomEndDate(event.target.value)}
+                    className="px-3 py-2 border rounded-lg bg-white text-sm"
+                  />
+                </div>
+              </>
+            )}
+          </div>
+        </Card>
+
         {/* Stats Cards */}
         {stats && (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-            {hasPermission('dashboard:orders') && (
+          <>
+            {stats.summary && (
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 mb-6">
+                <Card className="bg-gradient-to-br from-emerald-50 to-emerald-100 border-emerald-200 shadow-lg hover:shadow-xl transition-shadow">
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <p className="text-sm font-medium text-emerald-800">Satis Ozeti</p>
+                      {summaryPeriodLabel && (
+                        <span className="text-xs font-semibold text-emerald-700 bg-emerald-200 px-2 py-1 rounded">
+                          {summaryPeriodLabel}
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-4xl font-bold text-emerald-700">{stats.summary.sales.count}</p>
+                    <p className="text-sm font-semibold text-emerald-800 bg-emerald-200 px-2 py-1 rounded">
+                      {formatCurrency(stats.summary.sales.amount)}
+                    </p>
+                  </div>
+                </Card>
+
+                <Card className="bg-gradient-to-br from-indigo-50 to-indigo-100 border-indigo-200 shadow-lg hover:shadow-xl transition-shadow">
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <p className="text-sm font-medium text-indigo-800">Teklif Ozeti</p>
+                      {summaryPeriodLabel && (
+                        <span className="text-xs font-semibold text-indigo-700 bg-indigo-200 px-2 py-1 rounded">
+                          {summaryPeriodLabel}
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-4xl font-bold text-indigo-700">{stats.summary.quotes.count}</p>
+                    <p className="text-sm font-semibold text-indigo-800 bg-indigo-200 px-2 py-1 rounded">
+                      {formatCurrency(stats.summary.quotes.amount)}
+                    </p>
+                  </div>
+                </Card>
+
+                <Card className="bg-gradient-to-br from-orange-50 to-orange-100 border-orange-200 shadow-lg hover:shadow-xl transition-shadow">
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <p className="text-sm font-medium text-orange-800">Siparis Ozeti</p>
+                      {summaryPeriodLabel && (
+                        <span className="text-xs font-semibold text-orange-700 bg-orange-200 px-2 py-1 rounded">
+                          {summaryPeriodLabel}
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-4xl font-bold text-orange-700">{stats.summary.orders.count}</p>
+                    <p className="text-sm font-semibold text-orange-800 bg-orange-200 px-2 py-1 rounded">
+                      {formatCurrency(stats.summary.orders.amount)}
+                    </p>
+                  </div>
+                </Card>
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+              {hasPermission('dashboard:orders') && (
               <Card className="bg-gradient-to-br from-yellow-50 to-yellow-100 border-yellow-200 shadow-lg hover:shadow-xl transition-shadow">
                 <div className="space-y-3">
                   <div className="flex items-center justify-between">
@@ -503,7 +633,8 @@ export default function AdminDashboardPage() {
                 </div>
               </Card>
             )}
-          </div>
+            </div>
+          </>
         )}
 
         {/* Hızlı Arama Widgetları */}

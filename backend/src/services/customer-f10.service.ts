@@ -6,6 +6,15 @@ interface CustomerF10SearchParams {
   offset?: number;
 }
 
+const buildSqlSearchTokens = (value?: string) => {
+  if (!value) return [] as string[];
+  return value
+    .replace(/\*/g, ' ')
+    .split(/\s+/)
+    .map((token) => token.trim())
+    .filter(Boolean);
+};
+
 class CustomerF10Service {
   // Cari F10 sorgusunu çalıştırır
   async searchCustomers(params: CustomerF10SearchParams = {}): Promise<any> {
@@ -14,8 +23,14 @@ class CustomerF10Service {
     // WHERE koşulu - arama terimi varsa ekle
     let whereClause = "cari_grup_kodu NOT LIKE 'FATURA' and cari_sektor_kodu NOT LIKE 'FATURA' and cari_sektor_kodu NOT LIKE 'DİĞER' and cari_grup_kodu NOT LIKE 'DİĞER'";
     if (searchTerm && searchTerm.trim()) {
-      const escapedTerm = searchTerm.trim().replace(/'/g, "''");
-      whereClause += ` AND (cari_unvan1 LIKE '%${escapedTerm}%' OR cari_kod LIKE '%${escapedTerm}%' OR cari_unvan2 LIKE '%${escapedTerm}%')`;
+      const tokens = buildSqlSearchTokens(searchTerm);
+      if (tokens.length > 0) {
+        const tokenClauses = tokens.map((token) => {
+          const escaped = token.replace(/'/g, "''");
+          return `(cari_unvan1 LIKE '%${escaped}%' OR cari_kod LIKE '%${escaped}%' OR cari_unvan2 LIKE '%${escaped}%')`;
+        });
+        whereClause += ` AND ${tokenClauses.join(' AND ')}`;
+      }
     }
 
     const query = `
@@ -37,6 +52,9 @@ class CustomerF10Service {
         ORDER BY cha_tarihi desc))*-1 [SON TAHSİLAT GÜN FARKI],
         (select +'(0'+adr_tel_bolge_kodu+')'+adr_tel_no1 from dbo.CARI_HESAP_ADRESLERI where adr_cari_kod=cari_kod and adr_adres_no=1) as [Telefon],
         (select top 1 mye_isim+' '+mye_soyisim from dbo.CARI_HESAP_YETKILILERI where mye_cari_kod=cari_kod)as [Yetkili],
+        cari_vdaire_no AS [Vergi No],
+        cari_vdaire_no AS [TaxNumber],
+        cari_vdaire_adi AS [Vergi Dairesi],
         cari_grup_kodu AS [GRUP KODU],
         cari_sektor_kodu AS [SEKTOR KODU],
         cari_CepTel AS [MUSTERI TEL],
@@ -85,6 +103,8 @@ class CustomerF10Service {
       'SON TAHSİLAT GÜN FARKI',
       'Telefon',
       'Yetkili',
+      'Vergi No',
+      'Vergi Dairesi',
       'GRUP KODU',
       'SEKTOR KODU',
       'MUSTERI TEL',

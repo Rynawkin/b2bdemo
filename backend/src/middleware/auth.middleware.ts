@@ -7,6 +7,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { verifyToken } from '../utils/jwt';
 import { prisma } from '../utils/prisma';
+import { rolePermissionService } from '../services/role-permission.service';
 
 /**
  * JWT token'ı doğrula ve req.user'a ekle
@@ -60,6 +61,24 @@ export const requireAdmin = (req: Request, res: Response, next: NextFunction): v
 
   if (req.user.role !== 'HEAD_ADMIN' && req.user.role !== 'ADMIN') {
     res.status(403).json({ error: 'Admin access required' });
+    return;
+  }
+
+  next();
+};
+
+/**
+ * ADMIN veya SALES_REP erisimi
+ * HEAD_ADMIN her zaman erisebilir
+ */
+export const requireAdminOrSalesRep = (req: Request, res: Response, next: NextFunction): void => {
+  if (!req.user) {
+    res.status(401).json({ error: 'Authentication required' });
+    return;
+  }
+
+  if (req.user.role !== 'HEAD_ADMIN' && req.user.role !== 'ADMIN' && req.user.role !== 'SALES_REP') {
+    res.status(403).json({ error: 'Admin or Sales Rep access required' });
     return;
   }
 
@@ -157,4 +176,58 @@ export const requireStaffOrDiversey = (req: Request, res: Response, next: NextFu
   }
 
   next();
+};
+
+
+/**
+ * Permission-based access
+ * HEAD_ADMIN always allowed
+ */
+export const requirePermission = (permission: string) => {
+  return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    if (!req.user) {
+      res.status(401).json({ error: 'Authentication required' });
+      return;
+    }
+
+    try {
+      const allowed = await rolePermissionService.hasPermission(req.user.userId, permission);
+      if (!allowed) {
+        res.status(403).json({ error: `Permission required: ${permission}` });
+        return;
+      }
+    } catch (error) {
+      res.status(403).json({ error: `Permission required: ${permission}` });
+      return;
+    }
+
+    next();
+  };
+};
+
+/**
+ * Any-of permission access
+ */
+export const requireAnyPermission = (permissions: string[]) => {
+  return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    if (!req.user) {
+      res.status(401).json({ error: 'Authentication required' });
+      return;
+    }
+
+    try {
+      for (const permission of permissions) {
+        // eslint-disable-next-line no-await-in-loop
+        const allowed = await rolePermissionService.hasPermission(req.user.userId, permission);
+        if (allowed) {
+          next();
+          return;
+        }
+      }
+    } catch (error) {
+      // fallthrough
+    }
+
+    res.status(403).json({ error: `Permission required: ${permissions.join(' | ')}` });
+  };
 };

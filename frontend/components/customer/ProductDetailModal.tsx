@@ -1,9 +1,17 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import { Product } from '@/types';
+import customerApi from '@/lib/api/customer';
 import { formatCurrency } from '@/lib/utils/format';
+import { getDisplayPrice, getVatLabel } from '@/lib/utils/vatDisplay';
+import { getUnitConversionLabel } from '@/lib/utils/unit';
+import { getDisplayStock, getMaxOrderQuantity } from '@/lib/utils/stock';
+import { confirmBackorder } from '@/lib/utils/confirm';
+import { trackCustomerActivity } from '@/lib/analytics/customerAnalytics';
 import { Button } from '@/components/ui/Button';
+import { ProductRecommendations } from '@/components/customer/ProductRecommendations';
 
 interface ProductDetailModalProps {
   product: Product | null;
@@ -15,20 +23,35 @@ interface ProductDetailModalProps {
     priceType: 'INVOICED' | 'WHITE',
     priceMode?: 'LIST' | 'EXCESS'
   ) => Promise<void>;
+  allowedPriceTypes?: Array<'INVOICED' | 'WHITE'>;
+  vatDisplayPreference?: 'WITH_VAT' | 'WITHOUT_VAT';
 }
 
-export function ProductDetailModal({ product, isOpen, onClose, onAddToCart }: ProductDetailModalProps) {
+export function ProductDetailModal({ product, isOpen, onClose, onAddToCart, allowedPriceTypes, vatDisplayPreference }: ProductDetailModalProps) {
+  const router = useRouter();
   const [quantity, setQuantity] = useState(1);
-  const [priceType, setPriceType] = useState<'INVOICED' | 'WHITE'>('INVOICED');
+  const resolvedAllowed: Array<'INVOICED' | 'WHITE'> =
+    allowedPriceTypes && allowedPriceTypes.length > 0 ? allowedPriceTypes : ['INVOICED', 'WHITE'];
+  const defaultPriceType = resolvedAllowed.includes('INVOICED') ? 'INVOICED' : 'WHITE';
+  const [priceType, setPriceType] = useState<'INVOICED' | 'WHITE'>(defaultPriceType);
   const [isZoomed, setIsZoomed] = useState(false);
   const [isAdding, setIsAdding] = useState(false);
+  const [recommendations, setRecommendations] = useState<Product[]>([]);
+  const [isLoadingRecommendations, setIsLoadingRecommendations] = useState(false);
 
   // Reset state when product changes
   useEffect(() => {
     setQuantity(1);
-    setPriceType('INVOICED');
+    setPriceType(defaultPriceType);
     setIsZoomed(false);
+    setRecommendations([]);
   }, [product]);
+
+  useEffect(() => {
+    if (!resolvedAllowed.includes(priceType)) {
+      setPriceType(defaultPriceType);
+    }
+  }, [resolvedAllowed.join('|')]);
 
   // Close on ESC key
   useEffect(() => {
@@ -55,11 +78,68 @@ export function ProductDetailModal({ product, isOpen, onClose, onAddToCart }: Pr
     };
   }, [isOpen]);
 
+  useEffect(() => {
+    if (!isOpen || !product?.id) return;
+    trackCustomerActivity({
+      type: 'PRODUCT_VIEW',
+      productId: product.id,
+      productCode: product.mikroCode,
+      pagePath: typeof window !== 'undefined' ? `${window.location.pathname}${window.location.search}` : undefined,
+      pageTitle: typeof document !== 'undefined' ? document.title : undefined,
+      meta: { productName: product.name },
+    });
+  }, [isOpen, product?.id]);
+
+  useEffect(() => {
+    if (!isOpen || !product?.id) {
+      setRecommendations([]);
+      setIsLoadingRecommendations(false);
+      return;
+    }
+
+    let active = true;
+
+    const loadRecommendations = async () => {
+      setIsLoadingRecommendations(true);
+      try {
+        const data = await customerApi.getProductRecommendations(product.id);
+        if (active) {
+          setRecommendations(data.products || []);
+        }
+      } catch (error) {
+        console.error('Oneriler yuklenemedi:', error);
+        if (active) {
+          setRecommendations([]);
+        }
+      } finally {
+        if (active) {
+          setIsLoadingRecommendations(false);
+        }
+      }
+    };
+
+    loadRecommendations();
+
+    return () => {
+      active = false;
+    };
+  }, [isOpen, product?.id]);
+
   const handleAddToCart = async () => {
     if (!product) return;
 
     setIsAdding(true);
     try {
+      if (quantity > maxQuantity) {
+        const confirmed = await confirmBackorder({
+          requestedQty: quantity,
+          availableQty: maxQuantity,
+          unit: product.unit,
+        });
+        if (!confirmed) {
+          return;
+        }
+      }
       const priceMode = product.pricingMode === 'EXCESS' ? 'EXCESS' : 'LIST';
       await onAddToCart(product.id, quantity, priceType, priceMode);
       onClose();
@@ -70,20 +150,55 @@ export function ProductDetailModal({ product, isOpen, onClose, onAddToCart }: Pr
     }
   };
 
+  const handleRecommendationAdd = async (productId: string) => {
+    const recommendation = recommendations.find((item) => item.id === productId);
+    if (!recommendation) return;
+
+    const safePriceType = resolvedAllowed.includes(priceType) ? priceType : defaultPriceType;
+    const priceMode = recommendation.pricingMode === 'EXCESS' ? 'EXCESS' : 'LIST';
+
+    try {
+      await onAddToCart(productId, 1, safePriceType, priceMode);
+    } catch (error) {
+      // Error is handled in parent
+    }
+  };
+
+  const handleRecommendationClick = (item: Product) => {
+    onClose();
+    router.push(`/products/${item.id}`);
+  };
+
   if (!isOpen || !product) return null;
 
   const isDiscounted = product.pricingMode === 'EXCESS';
-  const maxQuantity =
-    product.maxOrderQuantity ??
-    (isDiscounted ? product.excessStock : product.availableStock ?? product.excessStock ?? 0);
+  const maxQuantity = getMaxOrderQuantity(product, isDiscounted ? 'EXCESS' : 'LIST');
   const displayStock = isDiscounted
-    ? product.excessStock
-    : product.availableStock ?? product.excessStock ?? 0;
+    ? product.excessStock ?? 0
+    : getDisplayStock(product);
   const warehouseBreakdown = isDiscounted ? product.warehouseExcessStocks : product.warehouseStocks;
+  const warehouseLabels: Record<string, string> = { '1': 'Merkez Depo', '6': 'Topça Depo' };
+  const warehouseEntries = Object.entries(warehouseBreakdown || {})
+    .map(([warehouse, stock]) => {
+      const match = String(warehouse).match(/\d+/);
+      const key = match ? match[0] : warehouse;
+      return { key, stock: Number(stock) || 0 };
+    })
+    .filter(({ key, stock }) => (key === '1' || key === '6') && stock > 0);
   const listInvoiced = product.listPrices?.invoiced;
   const listWhite = product.listPrices?.white;
   const excessInvoiced = product.excessPrices?.invoiced;
   const excessWhite = product.excessPrices?.white;
+  const hasAgreement = Boolean(product.agreement);
+  const agreementMinQuantity = product.agreement?.minQuantity ?? 1;
+  const showPriceTypeSelector = resolvedAllowed.length > 1;
+  const priceGridClass = resolvedAllowed.length === 1 ? 'grid-cols-1' : 'grid-cols-2';
+  const formatAgreementDate = (value?: string | Date | null) => {
+    if (!value) return '-';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return '-';
+    return date.toISOString().slice(0, 10);
+  };
 
   const calcDiscount = (listPrice?: number, salePrice?: number) => {
     if (!listPrice || listPrice <= 0 || !salePrice || salePrice >= listPrice) return null;
@@ -94,9 +209,23 @@ export function ProductDetailModal({ product, isOpen, onClose, onAddToCart }: Pr
   const whiteDiscount = calcDiscount(listWhite, product.prices.white);
   const excessInvoicedDiscount = calcDiscount(product.prices.invoiced, excessInvoiced);
   const excessWhiteDiscount = calcDiscount(product.prices.white, excessWhite);
+  const shouldShowDiscounts = !hasAgreement;
 
   const selectedPrice = priceType === 'INVOICED' ? product.prices.invoiced : product.prices.white;
   const totalPrice = selectedPrice * quantity;
+  const displaySelectedPrice = getDisplayPrice(selectedPrice, product.vatRate, priceType, vatDisplayPreference);
+  const displayTotalPrice = getDisplayPrice(totalPrice, product.vatRate, priceType, vatDisplayPreference);
+  const displayInvoicedPrice = getDisplayPrice(product.prices.invoiced, product.vatRate, 'INVOICED', vatDisplayPreference);
+  const displayWhitePrice = getDisplayPrice(product.prices.white, product.vatRate, 'WHITE', vatDisplayPreference);
+  const displayListInvoiced = listInvoiced ? getDisplayPrice(listInvoiced, product.vatRate, 'INVOICED', vatDisplayPreference) : 0;
+  const displayListWhite = listWhite ? getDisplayPrice(listWhite, product.vatRate, 'WHITE', vatDisplayPreference) : 0;
+  const displayExcessInvoiced = excessInvoiced !== undefined
+    ? getDisplayPrice(excessInvoiced, product.vatRate, 'INVOICED', vatDisplayPreference)
+    : undefined;
+  const displayExcessWhite = excessWhite !== undefined
+    ? getDisplayPrice(excessWhite, product.vatRate, 'WHITE', vatDisplayPreference)
+    : undefined;
+  const unitLabel = getUnitConversionLabel(product.unit, product.unit2, product.unit2Factor);
 
   return (
     <div
@@ -125,7 +254,7 @@ export function ProductDetailModal({ product, isOpen, onClose, onAddToCart }: Pr
           {/* Left: Image */}
           <div className="space-y-4">
             <div
-              className={`relative bg-gradient-to-br from-gray-100 to-gray-200 rounded-xl overflow-hidden ${
+              className={`relative bg-white border border-gray-200 rounded-xl overflow-hidden aspect-square ${
                 isZoomed ? 'cursor-zoom-out' : 'cursor-zoom-in'
               }`}
               onClick={() => setIsZoomed(!isZoomed)}
@@ -134,7 +263,7 @@ export function ProductDetailModal({ product, isOpen, onClose, onAddToCart }: Pr
                 <img
                   src={product.imageUrl}
                   alt={product.name}
-                  className={`w-full transition-transform duration-300 ${
+                  className={`w-full h-full object-contain transition-transform duration-300 ${
                     isZoomed ? 'scale-150' : 'scale-100'
                   }`}
                   style={{
@@ -170,7 +299,7 @@ export function ProductDetailModal({ product, isOpen, onClose, onAddToCart }: Pr
             )}
 
             {/* Warehouse Stock Breakdown */}
-            {warehouseBreakdown && Object.keys(warehouseBreakdown).length > 0 && (
+            {warehouseEntries.length > 0 && (
               <div className="bg-gray-50 rounded-xl p-4 border border-gray-200">
                 <h4 className="font-semibold text-sm text-gray-900 mb-3 flex items-center gap-2">
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -179,9 +308,9 @@ export function ProductDetailModal({ product, isOpen, onClose, onAddToCart }: Pr
                   {isDiscounted ? 'Depo Dagilimi (Fazla Stok)' : 'Depo Dagilimi'}
                 </h4>
                 <div className="space-y-2">
-                  {Object.entries(warehouseBreakdown).map(([warehouse, stock]) => (
-                    <div key={warehouse} className="flex justify-between items-center text-sm">
-                      <span className="text-gray-700 font-medium">{warehouse}</span>
+                  {warehouseEntries.map(({ key, stock }) => (
+                    <div key={key} className="flex justify-between items-center text-sm">
+                      <span className="text-gray-700 font-medium">{warehouseLabels[key] || key}</span>
                       <span className="bg-white px-3 py-1 rounded-lg border border-gray-200 font-semibold text-gray-900">
                         {stock} {product.unit}
                       </span>
@@ -208,76 +337,102 @@ export function ProductDetailModal({ product, isOpen, onClose, onAddToCart }: Pr
               <p className="text-sm text-gray-600 font-mono bg-gray-100 px-3 py-2 rounded-lg inline-block">
                 Kod: {product.mikroCode}
               </p>
+              {unitLabel && (
+                <p className="mt-2 text-xs text-gray-500">{unitLabel}</p>
+              )}
             </div>
 
             {/* Price Type Selection */}
-            <div>
-              <label className="block text-sm font-semibold text-gray-900 mb-3">Fiyat Turu Secin</label>
-              <div className="grid grid-cols-2 gap-3">
-                <button
-                  className={`p-4 rounded-xl border-2 transition-all ${
-                    priceType === 'INVOICED'
-                      ? 'border-primary-600 bg-gradient-to-br from-primary-50 to-primary-100 shadow-lg scale-105'
-                      : 'border-gray-200 bg-white hover:border-gray-300 hover:shadow-md'
-                  }`}
-                  onClick={() => setPriceType('INVOICED')}
-                >
-                  <div className="text-xs text-gray-600 mb-1">📄 Faturali</div>
-                  <div className="text-2xl font-bold text-primary-600">
-                    {formatCurrency(product.prices.invoiced)}
+            <div className="space-y-3">
+              {hasAgreement && (
+                <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-xs text-blue-800">
+                  <div className="font-semibold">Anlasmali fiyat</div>
+                  <div>Min miktar: {agreementMinQuantity} {product.unit}</div>
+                  {product.agreement?.customerProductCode && (
+                    <div>Ozel urun kodu: {product.agreement.customerProductCode}</div>
+                  )}
+                  <div>
+                    Gecerlilik: {formatAgreementDate(product.agreement?.validFrom)}
+                    {product.agreement?.validTo ? ` - ${formatAgreementDate(product.agreement?.validTo)}` : ''}
                   </div>
-                  {isDiscounted && listInvoiced && listInvoiced > 0 && (
-                    <div className="text-xs text-gray-500">
-                      Liste: <span className="line-through">{formatCurrency(listInvoiced)}</span>
+                </div>
+              )}
+              <label className="block text-sm font-semibold text-gray-900">
+                {showPriceTypeSelector ? 'Fiyat turu secin' : 'Fiyat'}
+              </label>
+              <div className={`grid ${priceGridClass} gap-3`}>
+                {resolvedAllowed.includes('INVOICED') && (
+                  <button
+                    className={`p-4 rounded-xl border-2 transition-all ${
+                      priceType === 'INVOICED'
+                        ? 'border-primary-600 bg-gradient-to-br from-primary-50 to-primary-100 shadow-lg scale-105'
+                        : 'border-gray-200 bg-white hover:border-gray-300 hover:shadow-md'
+                    }`}
+                    onClick={() => showPriceTypeSelector && setPriceType('INVOICED')}
+                    disabled={!showPriceTypeSelector}
+                  >
+                    <div className="text-xs text-gray-600 mb-1">Faturali</div>
+                    <div className="text-2xl font-bold text-primary-600">
+                        {formatCurrency(displayInvoicedPrice)}
                     </div>
-                  )}
-                  {isDiscounted && invoicedDiscount && (
-                    <div className="text-xs text-green-700 font-semibold">
-                      <span className="bg-green-100 text-green-800 px-1.5 py-0.5 rounded">-%{invoicedDiscount}</span> indirim
-                    </div>
-                  )}
-                  {!isDiscounted && product.excessStock > 0 && excessInvoiced && (
-                    <div className="text-xs text-green-700 font-semibold">
-                      Fazla Stok: {formatCurrency(excessInvoiced)}
-                      {excessInvoicedDiscount && (
-                        <span> (-%{excessInvoicedDiscount})</span>
+                    {shouldShowDiscounts && isDiscounted && listInvoiced && listInvoiced > 0 && (
+                      <div className="text-xs text-gray-500">
+                        Liste: <span className="line-through">{formatCurrency(displayListInvoiced)}</span>
+                      </div>
+                    )}
+                    {shouldShowDiscounts && isDiscounted && invoicedDiscount && (
+                      <div className="text-xs text-green-700 font-semibold">
+                        <span className="bg-green-100 text-green-800 px-1.5 py-0.5 rounded">-%{invoicedDiscount}</span> indirim
+                      </div>
+                    )}
+                      {shouldShowDiscounts && !isDiscounted && product.excessStock > 0 && displayExcessInvoiced !== undefined && (
+                        <div className="text-xs text-green-700 font-semibold">
+                          Fazla Stok: {formatCurrency(displayExcessInvoiced)}
+                          {excessInvoicedDiscount && (
+                            <span> (-%{excessInvoicedDiscount})</span>
+                          )}
+                        </div>
                       )}
+                      <div className="text-xs text-gray-500 mt-1">
+                        /{product.unit} <span className="text-primary-600 font-semibold">{getVatLabel('INVOICED', vatDisplayPreference)}</span>
+                      </div>
+                  </button>
+                )}
+                {resolvedAllowed.includes('WHITE') && (
+                  <button
+                    className={`p-4 rounded-xl border-2 transition-all ${
+                      priceType === 'WHITE'
+                        ? 'border-gray-700 bg-gradient-to-br from-gray-100 to-gray-200 shadow-lg scale-105'
+                        : 'border-gray-200 bg-white hover:border-gray-300 hover:shadow-md'
+                    }`}
+                    onClick={() => showPriceTypeSelector && setPriceType('WHITE')}
+                    disabled={!showPriceTypeSelector}
+                  >
+                    <div className="text-xs text-gray-600 mb-1">Beyaz</div>
+                    <div className="text-2xl font-bold text-gray-900">
+                        {formatCurrency(displayWhitePrice)}
                     </div>
-                  )}
-                  <div className="text-xs text-gray-500 mt-1">/{product.unit} <span className="text-primary-600 font-semibold">+KDV</span></div>
-                </button>
-                <button
-                  className={`p-4 rounded-xl border-2 transition-all ${
-                    priceType === 'WHITE'
-                      ? 'border-gray-700 bg-gradient-to-br from-gray-100 to-gray-200 shadow-lg scale-105'
-                      : 'border-gray-200 bg-white hover:border-gray-300 hover:shadow-md'
-                  }`}
-                  onClick={() => setPriceType('WHITE')}
-                >
-                  <div className="text-xs text-gray-600 mb-1">⚪ Beyaz</div>
-                  <div className="text-2xl font-bold text-gray-900">
-                    {formatCurrency(product.prices.white)}
-                  </div>
-                  {isDiscounted && listWhite && listWhite > 0 && (
-                    <div className="text-xs text-gray-500">
-                      Liste: <span className="line-through">{formatCurrency(listWhite)}</span>
-                    </div>
-                  )}
-                  {isDiscounted && whiteDiscount && (
-                    <div className="text-xs text-green-700 font-semibold">
-                      <span className="bg-green-100 text-green-800 px-1.5 py-0.5 rounded">-%{whiteDiscount}</span> indirim
-                    </div>
-                  )}
-                  {!isDiscounted && product.excessStock > 0 && excessWhite && (
-                    <div className="text-xs text-green-700 font-semibold">
-                      Fazla Stok: {formatCurrency(excessWhite)}
-                      {excessWhiteDiscount && (
-                        <span> (-%{excessWhiteDiscount})</span>
+                      {shouldShowDiscounts && isDiscounted && displayListWhite > 0 && (
+                        <div className="text-xs text-gray-500">
+                          Liste: <span className="line-through">{formatCurrency(displayListWhite)}</span>
+                        </div>
                       )}
-                    </div>
-                  )}
-                  <div className="text-xs text-gray-500 mt-1">/{product.unit} <span className="text-gray-700 font-semibold">Özel Fiyat</span></div>
-                </button>
+                    {shouldShowDiscounts && isDiscounted && whiteDiscount && (
+                      <div className="text-xs text-green-700 font-semibold">
+                        <span className="bg-green-100 text-green-800 px-1.5 py-0.5 rounded">-%{whiteDiscount}</span> indirim
+                      </div>
+                    )}
+                      {shouldShowDiscounts && !isDiscounted && product.excessStock > 0 && displayExcessWhite !== undefined && (
+                        <div className="text-xs text-green-700 font-semibold">
+                          Fazla Stok: {formatCurrency(displayExcessWhite)}
+                          {excessWhiteDiscount && (
+                            <span> (-%{excessWhiteDiscount})</span>
+                          )}
+                        </div>
+                      )}
+                    <div className="text-xs text-gray-500 mt-1">/{product.unit} <span className="text-gray-700 font-semibold">Ozel Fiyat</span></div>
+                  </button>
+                )}
               </div>
             </div>
 
@@ -302,7 +457,8 @@ export function ProductDetailModal({ product, isOpen, onClose, onAddToCart }: Pr
                     if (value === '' || parseInt(value) === 0) {
                       return; // Allow empty during typing
                     }
-                    const numValue = Math.max(1, Math.min(maxQuantity, parseInt(value)));
+                    const numericValue = parseInt(value);
+                    const numValue = Math.max(1, numericValue);
                     setQuantity(numValue);
                   }}
                   onBlur={(e) => {
@@ -314,7 +470,9 @@ export function ProductDetailModal({ product, isOpen, onClose, onAddToCart }: Pr
                   className="text-center font-bold text-xl h-12 w-24 border-2 border-gray-300 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500 rounded-lg px-3"
                 />
                 <button
-                  onClick={() => setQuantity(Math.min(maxQuantity, quantity + 1))}
+                  onClick={() => {
+                    setQuantity(quantity + 1);
+                  }}
                   className="bg-gray-100 hover:bg-gray-200 text-gray-900 rounded-xl w-12 h-12 flex items-center justify-center font-bold text-xl transition-colors"
                 >
                   +
@@ -322,7 +480,7 @@ export function ProductDetailModal({ product, isOpen, onClose, onAddToCart }: Pr
                 <span className="text-gray-600 font-semibold">{product.unit}</span>
               </div>
               <p className="text-xs text-gray-500 mt-2">
-                Maksimum: {maxQuantity} {product.unit}
+                Mevcut stok: {maxQuantity} {product.unit}
               </p>
             </div>
 
@@ -331,11 +489,11 @@ export function ProductDetailModal({ product, isOpen, onClose, onAddToCart }: Pr
               <div className="flex justify-between items-center">
                 <div>
                   <div className="text-sm text-gray-700 mb-1">Toplam Fiyat</div>
-                  <div className="text-3xl font-bold text-primary-700">{formatCurrency(totalPrice)}</div>
+                  <div className="text-3xl font-bold text-primary-700">{formatCurrency(displayTotalPrice)}</div>
                 </div>
                 <div className="text-right">
                   <div className="text-xs text-gray-600">
-                    {quantity} {product.unit} x {formatCurrency(selectedPrice)}
+                    {quantity} {product.unit} x {formatCurrency(displaySelectedPrice)}
                   </div>
                   <div className="text-xs font-semibold text-primary-600 mt-1">
                     {priceType === 'INVOICED' ? 'Faturali' : 'Beyaz'}
@@ -369,6 +527,25 @@ export function ProductDetailModal({ product, isOpen, onClose, onAddToCart }: Pr
             )}
           </div>
         </div>
+
+      {(isLoadingRecommendations || recommendations.length > 0) && (
+        <div className="px-8 pb-8">
+          {isLoadingRecommendations ? (
+            <div className="text-sm text-gray-500">Oneriler yukleniyor...</div>
+          ) : (
+            <ProductRecommendations
+              products={recommendations}
+              title="Tamamlayici Urunler"
+              icon="+"
+              onProductClick={handleRecommendationClick}
+              onAddToCart={handleRecommendationAdd}
+              allowedPriceTypes={resolvedAllowed}
+              vatDisplayPreference={vatDisplayPreference}
+            />
+          )}
+        </div>
+      )}
+
       </div>
 
       <style jsx global>{`

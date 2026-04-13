@@ -5,10 +5,11 @@ import { useRouter } from 'next/navigation';
 import toast from 'react-hot-toast';
 import adminApi from '@/lib/api/admin';
 import { useAuthStore } from '@/lib/store/authStore';
+import { usePermissions } from '@/hooks/usePermissions';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { formatCurrency, formatDate } from '@/lib/utils/format';
-import { LogoLink } from '@/components/ui/Logo';
+import { getUnitConversionLabel } from '@/lib/utils/unit';
 import { ProductDetailModal } from '@/components/admin/ProductDetailModal';
 import { useDebounce } from '@/lib/hooks/useDebounce';
 
@@ -17,6 +18,8 @@ interface Product {
   name: string;
   mikroCode: string;
   unit: string;
+  unit2?: string | null;
+  unit2Factor?: number | null;
   excessStock: number;
   totalStock: number;
   warehouseStocks: Record<string, number>;
@@ -30,6 +33,11 @@ interface Product {
   prices: any;
   mikroPriceLists?: Record<string, number>;
   imageUrl: string | null;
+  imageChecksum?: string | null;
+  imageSyncStatus?: string | null;
+  imageSyncErrorType?: string | null;
+  imageSyncErrorMessage?: string | null;
+  imageSyncUpdatedAt?: string | null;
   category: {
     id: string;
     name: string;
@@ -56,7 +64,8 @@ interface Stats {
 
 export default function AdminProductsPage() {
   const router = useRouter();
-  const { user, loadUserFromStorage, logout } = useAuthStore();
+  const { user, loadUserFromStorage } = useAuthStore();
+  const { hasPermission, loading: permissionsLoading } = usePermissions();
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [isInitialLoad, setIsInitialLoad] = useState(true);
@@ -67,10 +76,14 @@ export default function AdminProductsPage() {
   // Filters
   const [search, setSearch] = useState('');
   const debouncedSearch = useDebounce(search, 300);
+  const [brand, setBrand] = useState('');
+  const debouncedBrand = useDebounce(brand, 300);
   const [hasImage, setHasImage] = useState<'all' | 'true' | 'false'>('all');
+  const [hasStock, setHasStock] = useState<'all' | 'true' | 'false'>('all');
+  const [imageSyncErrorType, setImageSyncErrorType] = useState<'all' | 'NO_IMAGE' | 'NO_GUID' | 'IMAGE_TOO_LARGE' | 'IMAGE_DOWNLOAD_ERROR' | 'IMAGE_PROCESS_ERROR' | 'NO_SERVICE'>('all');
   const [categoryId, setCategoryId] = useState<string>('');
   const [priceListStatus, setPriceListStatus] = useState<'all' | 'missing' | 'available'>('all');
-  const [sortBy, setSortBy] = useState<'name' | 'mikroCode' | 'excessStock' | 'lastEntryDate' | 'currentCost'>('name');
+  const [sortBy, setSortBy] = useState<'name' | 'mikroCode' | 'excessStock' | 'totalStock' | 'lastEntryDate' | 'currentCost' | 'imageSyncErrorType' | 'imageSyncUpdatedAt'>('name');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
 
   // Pagination
@@ -80,6 +93,10 @@ export default function AdminProductsPage() {
   // Detail Modal
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [selectedProductIds, setSelectedProductIds] = useState<string[]>([]);
+  const [isBulkSyncing, setIsBulkSyncing] = useState(false);
+  const [isImageUploading, setIsImageUploading] = useState(false);
+  const [isImageDeleting, setIsImageDeleting] = useState(false);
 
   useEffect(() => {
     loadUserFromStorage();
@@ -95,7 +112,7 @@ export default function AdminProductsPage() {
     }
   }, []);
 
-  const fetchProducts = useCallback(async (page: number = currentPage) => {
+  const fetchProducts = useCallback(async (page: number = 1) => {
     setIsSearching(true);
     try {
       const params: any = {
@@ -103,7 +120,10 @@ export default function AdminProductsPage() {
         limit: itemsPerPage,
       };
       if (debouncedSearch) params.search = debouncedSearch;
+      if (debouncedBrand) params.brand = debouncedBrand;
       if (hasImage !== 'all') params.hasImage = hasImage;
+      if (hasStock !== 'all') params.hasStock = hasStock;
+      if (imageSyncErrorType !== 'all') params.imageSyncErrorType = imageSyncErrorType;
       if (categoryId) params.categoryId = categoryId;
       if (priceListStatus !== 'all') params.priceListStatus = priceListStatus;
       params.sortBy = sortBy;
@@ -115,6 +135,15 @@ export default function AdminProductsPage() {
 
       const data = await adminApi.getProducts(params);
       setProducts(data.products);
+      if (data.pagination) {
+        setPagination(data.pagination);
+        setCurrentPage(data.pagination.page ?? page);
+      } else {
+        setCurrentPage(page);
+      }
+      if (data.stats) {
+        setStats(data.stats);
+      }
     } catch (error) {
       console.error('Ürünler yüklenemedi:', error);
       toast.error('Ürünler yüklenemedi');
@@ -122,28 +151,28 @@ export default function AdminProductsPage() {
       setIsSearching(false);
       setIsInitialLoad(false);
     }
-  }, [currentPage, debouncedSearch, hasImage, categoryId, priceListStatus, sortBy, sortOrder]);
+  }, [debouncedSearch, debouncedBrand, hasImage, hasStock, imageSyncErrorType, categoryId, priceListStatus, sortBy, sortOrder]);
 
   const fetchData = useCallback(async () => {
     await Promise.all([fetchProducts(1), fetchCategories()]);
   }, [fetchProducts, fetchCategories]);
 
   useEffect(() => {
-    if (user === null) return;
-    if (user.role !== 'ADMIN' && user.role !== 'MANAGER') {
-      router.push('/login');
+    if (user === null || permissionsLoading) return;
+    if (!hasPermission('admin:products')) {
+      router.push('/dashboard');
       return;
     }
 
     fetchData();
-  }, [user, router, fetchData]);
+  }, [user, permissionsLoading, router, fetchData, hasPermission]);
 
   useEffect(() => {
-    if (user?.role === 'ADMIN' || user?.role === 'MANAGER') {
+    if (hasPermission('admin:products')) {
       setCurrentPage(1); // Reset page when filters change
       fetchProducts(1);
     }
-  }, [debouncedSearch, hasImage, categoryId, priceListStatus, sortBy, sortOrder, user, fetchProducts]);
+  }, [debouncedSearch, debouncedBrand, hasImage, hasStock, imageSyncErrorType, categoryId, priceListStatus, sortBy, sortOrder, hasPermission, fetchProducts]);
 
   const handleSort = (field: typeof sortBy) => {
     if (sortBy === field) {
@@ -156,6 +185,132 @@ export default function AdminProductsPage() {
 
   // For displaying current page products (backend already paginated)
   const currentProducts = products;
+  const currentPageIds = currentProducts.map((product) => product.id);
+  const allSelectedOnPage = currentPageIds.length > 0 && currentPageIds.every((id) => selectedProductIds.includes(id));
+
+  const toggleSelectAll = () => {
+    if (allSelectedOnPage) {
+      setSelectedProductIds((prev) => prev.filter((id) => !currentPageIds.includes(id)));
+      return;
+    }
+
+    setSelectedProductIds((prev) => Array.from(new Set([...prev, ...currentPageIds])));
+  };
+
+  const toggleProductSelection = (productId: string) => {
+    setSelectedProductIds((prev) => {
+      if (prev.includes(productId)) {
+        return prev.filter((id) => id !== productId);
+      }
+      return [...prev, productId];
+    });
+  };
+
+  const handleBulkImageSync = async () => {
+    if (selectedProductIds.length === 0) {
+      toast.error('Secili urun bulunamadi');
+      return;
+    }
+
+    setIsBulkSyncing(true);
+    try {
+      await adminApi.triggerSelectedImageSync(selectedProductIds);
+      toast.success('Secili urunler icin resim senkronu baslatildi');
+    } catch (error) {
+      console.error('Secili resim senkronu baslatilamadi:', error);
+      toast.error('Resim senkronu baslatilamadi');
+    } finally {
+      setIsBulkSyncing(false);
+    }
+  };
+
+  const updateProductState = useCallback((productId: string, updates: Partial<Product>) => {
+    setProducts((prev) =>
+      prev.map((product) => (product.id === productId ? { ...product, ...updates } : product))
+    );
+    setSelectedProduct((prev) => (prev && prev.id === productId ? { ...prev, ...updates } : prev));
+  }, []);
+
+  const handleImageUpload = async (productId: string, file: File) => {
+    if (!file) {
+      return;
+    }
+
+    if (!file.type.startsWith('image/')) {
+      toast.error('Lutfen sadece resim dosyasi yukleyin');
+      return;
+    }
+
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error('Dosya boyutu 5MB altinda olmali');
+      return;
+    }
+
+    setIsImageUploading(true);
+    const formData = new FormData();
+    formData.append('image', file);
+
+    try {
+      const response = await adminApi.uploadProductImage(productId, formData);
+      updateProductState(productId, {
+        imageUrl: response.imageUrl,
+        imageChecksum: response.imageChecksum ?? null,
+        imageSyncStatus: 'SUCCESS',
+        imageSyncErrorType: null,
+        imageSyncErrorMessage: null,
+        imageSyncUpdatedAt: response.imageSyncUpdatedAt ?? new Date().toISOString(),
+      });
+      toast.success('Fotograf yuklendi');
+    } catch (error: any) {
+      toast.error(error.response?.data?.error || 'Fotograf yuklenemedi');
+    } finally {
+      setIsImageUploading(false);
+    }
+  };
+
+  const handleImageDelete = async (productId: string) => {
+    const confirmed = window.confirm('Urun fotografini silmek istiyor musunuz?');
+    if (!confirmed) {
+      return;
+    }
+
+    setIsImageDeleting(true);
+    try {
+      await adminApi.deleteProductImage(productId);
+      updateProductState(productId, {
+        imageUrl: null,
+        imageChecksum: null,
+        imageSyncStatus: null,
+        imageSyncErrorType: null,
+        imageSyncErrorMessage: null,
+        imageSyncUpdatedAt: new Date().toISOString(),
+      });
+      toast.success('Fotograf silindi');
+    } catch (error: any) {
+      toast.error(error.response?.data?.error || 'Fotograf silinemedi');
+    } finally {
+      setIsImageDeleting(false);
+    }
+  };
+
+  const getImageSyncErrorLabel = (value?: string | null) => {
+    switch (value) {
+      case 'NO_IMAGE':
+        return 'Mikro resim yok';
+      case 'NO_GUID':
+        return 'GUID yok';
+      case 'IMAGE_TOO_LARGE':
+        return 'Resim cok buyuk';
+      case 'IMAGE_DOWNLOAD_ERROR':
+        return 'Indirme hatasi';
+      case 'IMAGE_PROCESS_ERROR':
+        return 'Isleme hatasi';
+      case 'NO_SERVICE':
+        return 'Mock/No Service';
+      default:
+        return '';
+    }
+  };
 
   if (!user || isInitialLoad) {
     return (
@@ -167,38 +322,14 @@ export default function AdminProductsPage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Header */}
-      <header className="bg-gradient-to-r from-primary-700 to-primary-600 shadow-lg">
-        <div className="container-custom py-4">
-          <div className="flex justify-between items-center">
-            <div className="flex items-center gap-6">
-              <LogoLink href="/dashboard" variant="light" />
-              <div>
-                <h1 className="text-xl font-bold text-white">📦 Ürün Yönetimi</h1>
-                <p className="text-sm text-primary-100">Tüm ürünleri görüntüle ve yönet</p>
-              </div>
-            </div>
-            <div className="flex gap-3 flex-wrap">
-              <Button
-                variant="secondary"
-                onClick={() => router.push('/dashboard')}
-                className="bg-white text-primary-700 hover:bg-primary-50"
-              >
-                ← Dashboard
-              </Button>
-              <Button
-                variant="ghost"
-                onClick={() => { logout(); router.push('/login'); }}
-                className="text-white hover:bg-primary-800"
-              >
-                Çıkış
-              </Button>
-            </div>
-          </div>
-        </div>
-      </header>
 
       <div className="container-custom py-8">
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900">Urun Yonetimi</h1>
+            <p className="text-sm text-gray-600">Tum urunleri goruntule ve yonet</p>
+          </div>
+        </div>
         {/* Filters */}
         <Card className="mb-6 shadow-lg">
           <div className="space-y-4">
@@ -229,7 +360,7 @@ export default function AdminProductsPage() {
             </div>
 
             {/* Filters Row */}
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-7 gap-4">
               {/* Image Filter */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -243,6 +374,26 @@ export default function AdminProductsPage() {
                   <option value="all">Tümü</option>
                   <option value="true">Fotoğrafı Olanlar</option>
                   <option value="false">Fotoğrafı Olmayanlar</option>
+                </select>
+              </div>
+
+              {/* Image Error Filter */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Resim Hata Tipi
+                </label>
+                <select
+                  value={imageSyncErrorType}
+                  onChange={(e) => setImageSyncErrorType(e.target.value as any)}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                >
+                  <option value="all">Tumu</option>
+                  <option value="NO_IMAGE">NO_IMAGE</option>
+                  <option value="NO_GUID">NO_GUID</option>
+                  <option value="IMAGE_TOO_LARGE">IMAGE_TOO_LARGE</option>
+                  <option value="IMAGE_DOWNLOAD_ERROR">IMAGE_DOWNLOAD_ERROR</option>
+                  <option value="IMAGE_PROCESS_ERROR">IMAGE_PROCESS_ERROR</option>
+                  <option value="NO_SERVICE">MOCK_MODE / NO_SERVICE</option>
                 </select>
               </div>
 
@@ -262,6 +413,36 @@ export default function AdminProductsPage() {
                       {cat.name}
                     </option>
                   ))}
+                </select>
+              </div>
+
+              {/* Brand Filter */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Marka
+                </label>
+                <input
+                  type="text"
+                  value={brand}
+                  onChange={(e) => setBrand(e.target.value)}
+                  placeholder="Marka kodu veya adi..."
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                />
+              </div>
+
+              {/* Stock Filter */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Stok Durumu
+                </label>
+                <select
+                  value={hasStock}
+                  onChange={(e) => setHasStock(e.target.value as any)}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                >
+                  <option value="all">Tumu</option>
+                  <option value="true">Stokta Olanlar</option>
+                  <option value="false">Stokta Olmayanlar</option>
                 </select>
               </div>
 
@@ -295,8 +476,11 @@ export default function AdminProductsPage() {
                     <option value="name">İsim</option>
                     <option value="mikroCode">Mikro Kod</option>
                     <option value="excessStock">Fazla Stok</option>
+                    <option value="totalStock">Toplam Stok</option>
                     <option value="lastEntryDate">Son Giriş Tarihi</option>
                     <option value="currentCost">Güncel Maliyet</option>
+                    <option value="imageSyncErrorType">Resim Hata</option>
+                    <option value="imageSyncUpdatedAt">Resim Guncelleme</option>
                   </select>
                   <Button
                     variant="secondary"
@@ -335,6 +519,18 @@ export default function AdminProductsPage() {
 
         {/* Products Table */}
         <Card className="shadow-lg overflow-hidden">
+          <div className="flex flex-wrap items-center justify-between gap-3 px-6 py-4 border-b border-gray-200 bg-white">
+            <div className="text-sm text-gray-600">
+              Secili urun: <span className="font-semibold text-gray-900">{selectedProductIds.length}</span>
+            </div>
+            <Button
+              variant="primary"
+              onClick={handleBulkImageSync}
+              disabled={isBulkSyncing || selectedProductIds.length === 0}
+            >
+              {isBulkSyncing ? 'Resim senkronu baslatiliyor...' : 'Secili urunlerin resmini guncelle'}
+            </Button>
+          </div>
           <div className="relative">
             {/* Loading Overlay */}
             {isSearching && (
@@ -350,7 +546,19 @@ export default function AdminProductsPage() {
               <thead className="bg-gradient-to-r from-gray-50 to-gray-100 border-b-2 border-gray-200">
                 <tr>
                   <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">
+                    <input
+                      type="checkbox"
+                      aria-label="Tumunu sec"
+                      checked={allSelectedOnPage}
+                      onChange={toggleSelectAll}
+                      className="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                    />
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">
                     Fotoğraf
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">
+                    Resim Durumu
                   </th>
                   <th
                     className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider cursor-pointer hover:bg-gray-200"
@@ -411,20 +619,31 @@ export default function AdminProductsPage() {
               <tbody className="divide-y divide-gray-200">
                 {currentProducts.length === 0 ? (
                   <tr>
-                    <td colSpan={9} className="px-4 py-12 text-center text-gray-500">
+                    <td colSpan={11} className="px-4 py-12 text-center text-gray-500">
                       Ürün bulunamadı
                     </td>
                   </tr>
                 ) : (
-                  currentProducts.map((product) => (
+                  currentProducts.map((product) => {
+                    const unitLabel = getUnitConversionLabel(product.unit, product.unit2, product.unit2Factor);
+                    return (
                     <tr key={product.id} className="hover:bg-gray-50 transition-colors">
                       <td className="px-4 py-3">
+                        <input
+                          type="checkbox"
+                          aria-label={`Sec ${product.name}`}
+                          checked={selectedProductIds.includes(product.id)}
+                          onChange={() => toggleProductSelection(product.id)}
+                          className="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                        />
+                      </td>
+                      <td className="px-4 py-3">
                         {product.imageUrl ? (
-                          <div className="relative w-16 h-16 bg-gray-100 rounded-lg overflow-hidden shadow-sm">
+                          <div className="relative w-16 h-16 bg-white rounded-lg overflow-hidden shadow-sm border border-gray-200">
                             <img
                               src={product.imageUrl}
                               alt={product.name}
-                              className="w-full h-full object-cover"
+                              className="w-full h-full object-contain"
                             />
                           </div>
                         ) : (
@@ -434,8 +653,40 @@ export default function AdminProductsPage() {
                         )}
                       </td>
                       <td className="px-4 py-3">
+                        {product.imageUrl ? (
+                          <div>
+                            <div className="text-xs font-semibold text-green-700">Var</div>
+                            {product.imageChecksum && (
+                              <div className="text-[10px] text-gray-500">
+                                SHA: {product.imageChecksum.slice(0, 12)}...
+                              </div>
+                            )}
+                          </div>
+                        ) : (
+                          <div>
+                            <div className="text-xs font-semibold text-yellow-700">Eksik</div>
+                            {product.imageSyncErrorType && (
+                              <div className="text-xs text-gray-600">
+                                {getImageSyncErrorLabel(product.imageSyncErrorType) || product.imageSyncErrorType}
+                              </div>
+                            )}
+                            {product.imageSyncErrorMessage && (
+                              <div className="text-[10px] text-gray-500">
+                                {product.imageSyncErrorMessage}
+                              </div>
+                            )}
+                            {product.imageChecksum && (
+                              <div className="text-[10px] text-gray-500">
+                                SHA: {product.imageChecksum.slice(0, 12)}...
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </td>
+                      <td className="px-4 py-3">
                         <div className="font-medium text-gray-900">{product.name}</div>
                         <div className="text-sm text-gray-500">{product.unit}</div>
+                        {unitLabel && <div className="text-xs text-gray-500">{unitLabel}</div>}
                       </td>
                       <td className="px-4 py-3">
                         <span className="font-mono text-sm text-gray-700">{product.mikroCode}</span>
@@ -499,7 +750,8 @@ export default function AdminProductsPage() {
                         </Button>
                       </td>
                     </tr>
-                  ))
+                  );
+                  })
                 )}
               </tbody>
             </table>
@@ -515,7 +767,7 @@ export default function AdminProductsPage() {
                 <Button
                   variant="secondary"
                   onClick={() => {
-                    const newPage = Math.max(1, currentPage - 1);
+                    const newPage = Math.max(1, pagination.page - 1);
                     setCurrentPage(newPage);
                     fetchProducts(newPage);
                   }}
@@ -527,7 +779,7 @@ export default function AdminProductsPage() {
                 <Button
                   variant="secondary"
                   onClick={() => {
-                    const newPage = Math.min(pagination.totalPages, currentPage + 1);
+                    const newPage = Math.min(pagination.totalPages, pagination.page + 1);
                     setCurrentPage(newPage);
                     fetchProducts(newPage);
                   }}
@@ -548,6 +800,10 @@ export default function AdminProductsPage() {
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
         product={selectedProduct}
+        onUploadImage={handleImageUpload}
+        onDeleteImage={handleImageDelete}
+        imageUploading={isImageUploading}
+        imageDeleting={isImageDeleting}
       />
     </div>
   );

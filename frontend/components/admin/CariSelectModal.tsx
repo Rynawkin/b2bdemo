@@ -5,8 +5,10 @@ import { Modal } from '@/components/ui/Modal';
 import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
+import { buildSearchTokens, matchesSearchTokens, normalizeSearchText } from '@/lib/utils/search';
 
 interface MikroCari {
+  userId?: string;
   code: string;
   name: string;
   city?: string;
@@ -16,6 +18,9 @@ interface MikroCari {
   groupCode?: string;
   sectorCode?: string;
   paymentTerm?: number;
+  paymentPlanNo?: number | null;
+  paymentPlanCode?: string | null;
+  paymentPlanName?: string | null;
   hasEInvoice: boolean;
   balance: number;
 }
@@ -31,21 +36,24 @@ export function CariSelectModal({ isOpen, onClose, onSelect, cariList }: CariSel
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCari, setSelectedCari] = useState<MikroCari | null>(null);
 
-  const filteredCariList = useMemo(() => {
-    if (!searchTerm) return cariList;
+  const searchTokens = useMemo(() => buildSearchTokens(searchTerm), [searchTerm]);
 
-    const lowerSearch = searchTerm.toLowerCase();
-    return cariList.filter(
-      cari =>
-        (cari.code?.toLowerCase() || '').includes(lowerSearch) ||
-        (cari.name?.toLowerCase() || '').includes(lowerSearch) ||
-        (cari.city?.toLowerCase() || '').includes(lowerSearch) ||
-        (cari.district?.toLowerCase() || '').includes(lowerSearch) ||
-        (cari.phone?.toLowerCase() || '').includes(lowerSearch) ||
-        (cari.sectorCode?.toLowerCase() || '').includes(lowerSearch) ||
-        (cari.groupCode?.toLowerCase() || '').includes(lowerSearch)
-    );
-  }, [cariList, searchTerm]);
+  const filteredCariList = useMemo(() => {
+    if (searchTokens.length === 0) return cariList;
+
+    return cariList.filter((cari) => {
+      const haystack = normalizeSearchText([
+        cari.code,
+        cari.name,
+        cari.city,
+        cari.district,
+        cari.phone,
+        cari.sectorCode,
+        cari.groupCode,
+      ].filter(Boolean).join(' '));
+      return matchesSearchTokens(haystack, searchTokens);
+    });
+  }, [cariList, searchTokens]);
 
   const handleRowClick = (cari: MikroCari) => {
     setSelectedCari(cari);
@@ -64,6 +72,16 @@ export function CariSelectModal({ isOpen, onClose, onSelect, cariList }: CariSel
     setSelectedCari(null);
     setSearchTerm('');
     onClose();
+  };
+
+  const getPaymentPlanLabel = (cari: MikroCari) => {
+    if (cari.paymentPlanName || cari.paymentPlanCode) {
+      return [cari.paymentPlanCode, cari.paymentPlanName].filter(Boolean).join(' - ');
+    }
+    if (cari.paymentTerm !== undefined && cari.paymentTerm !== null) {
+      return `${cari.paymentTerm} gün`;
+    }
+    return '-';
   };
 
   return (
@@ -107,7 +125,7 @@ export function CariSelectModal({ isOpen, onClose, onSelect, cariList }: CariSel
               {selectedCari.isLocked && <Badge variant="danger">Kilitli</Badge>}
               {selectedCari.hasEInvoice && <Badge variant="success">E-Fatura</Badge>}
             </p>
-            <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-2 text-sm">
               <p><span className="font-medium">Cari Kodu:</span> {selectedCari.code}</p>
               <p><span className="font-medium">İsim:</span> {selectedCari.name}</p>
               <p><span className="font-medium">Şehir:</span> {selectedCari.city || '-'}</p>
@@ -115,7 +133,7 @@ export function CariSelectModal({ isOpen, onClose, onSelect, cariList }: CariSel
               <p><span className="font-medium">Telefon:</span> {selectedCari.phone || '-'}</p>
               <p><span className="font-medium">Grup Kodu:</span> {selectedCari.groupCode || '-'}</p>
               <p><span className="font-medium">Sektör Kodu:</span> {selectedCari.sectorCode || '-'}</p>
-              <p><span className="font-medium">Vade:</span> {selectedCari.paymentTerm !== undefined ? `${selectedCari.paymentTerm} gün` : '-'}</p>
+              <p><span className="font-medium">Vade:</span> {getPaymentPlanLabel(selectedCari)}</p>
               <p className="col-span-2">
                 <span className="font-medium">Bakiye:</span>{' '}
                 <span className={selectedCari.balance >= 0 ? 'text-green-600 font-semibold' : 'text-red-600 font-semibold'}>
@@ -175,7 +193,7 @@ export function CariSelectModal({ isOpen, onClose, onSelect, cariList }: CariSel
                       {cari.sectorCode || '-'}
                     </td>
                     <td className="px-4 py-3 text-sm text-gray-600 text-center">
-                      {cari.paymentTerm !== undefined ? `${cari.paymentTerm} gün` : '-'}
+                      {getPaymentPlanLabel(cari)}
                     </td>
                     <td className="px-4 py-3 text-sm text-right font-medium">
                       <span className={cari.balance >= 0 ? 'text-green-600' : 'text-red-600'}>

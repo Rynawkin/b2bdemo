@@ -215,10 +215,10 @@ class SyncService {
    * Ürünleri Mikro'dan çek ve sync et
    */
   private async syncProducts(): Promise<number> {
-    const [mikroProducts, salesHistory, pendingOrders] = await Promise.all([
+    const [mikroProducts, salesHistory, pendingOrdersByWarehouse] = await Promise.all([
       mikroService.getProducts(),
       mikroService.getSalesHistory(),
-      mikroService.getPendingOrders(),
+      mikroService.getPendingOrdersByWarehouse(),
     ]);
 
     console.log(`📊 Mikro'dan ${mikroProducts.length} ürün çekildi`);
@@ -237,6 +237,36 @@ class SyncService {
     let count = 0;
     let skippedNoCategory = 0;
 
+    const pendingMap = new Map<string, {
+      sales: number;
+      purchases: number;
+      salesByWarehouse: Record<string, number>;
+    }>();
+
+    for (const pending of pendingOrdersByWarehouse) {
+      const productCode = String(pending.productCode || '').trim();
+      if (!productCode) continue;
+
+      const entry = pendingMap.get(productCode) || {
+        sales: 0,
+        purchases: 0,
+        salesByWarehouse: {},
+      };
+
+      const quantity = Math.max(0, Number(pending.quantity) || 0);
+      if (pending.type === 'SALES') {
+        entry.sales += quantity;
+        const warehouseKey = String(pending.warehouseCode || '').trim();
+        if (warehouseKey) {
+          entry.salesByWarehouse[warehouseKey] = (entry.salesByWarehouse[warehouseKey] || 0) + quantity;
+        }
+      } else {
+        entry.purchases += quantity;
+      }
+
+      pendingMap.set(productCode, entry);
+    }
+
     for (const mikroProduct of mikroProducts) {
       // Kategorisini bul
       const category = await prisma.category.findUnique({
@@ -250,6 +280,9 @@ class SyncService {
 
       // Depo stokları zaten mikroProduct.warehouseStocks içinde geliyor
       const warehouseStocksJson = mikroProduct.warehouseStocks || {};
+      const unit2 = mikroProduct.unit2?.trim() || null;
+      const rawUnit2Factor = Number(mikroProduct.unit2Factor);
+      const unit2Factor = Number.isFinite(rawUnit2Factor) && rawUnit2Factor !== 0 ? rawUnit2Factor : null;
 
       // Satış geçmişini topla (günlük)
       const productSales = salesHistory.filter((s) => s.productCode === mikroProduct.code);
@@ -262,23 +295,24 @@ class SyncService {
       });
 
       // Bekleyen siparişleri topla
-      const pendingSales = pendingOrders
-        .filter((o) => o.productCode === mikroProduct.code && o.type === 'SALES')
-        .reduce((sum, o) => sum + o.quantity, 0);
-
-      const pendingPurchases = pendingOrders
-        .filter((o) => o.productCode === mikroProduct.code && o.type === 'PURCHASE')
-        .reduce((sum, o) => sum + o.quantity, 0);
+      const pendingEntry = pendingMap.get(mikroProduct.code);
+      const pendingSales = pendingEntry?.sales || 0;
+      const pendingPurchases = pendingEntry?.purchases || 0;
+      const pendingSalesByWarehouse = pendingEntry?.salesByWarehouse || {};
 
       // Tarihleri parse et
       const parsedCurrentCostDate = this.parseDateString(mikroProduct.currentCostDate);
 
       // Ürünü upsert et
-      await prisma.product.upsert({
-        where: { mikroCode: mikroProduct.code },
-        update: {
-          name: mikroProduct.name,
-          unit: mikroProduct.unit,
+        await prisma.product.upsert({
+          where: { mikroCode: mikroProduct.code },
+          update: {
+            name: mikroProduct.name,
+            foreignName: mikroProduct.foreignName || null,
+            brandCode: mikroProduct.brandCode || null,
+            unit: mikroProduct.unit,
+            unit2,
+            unit2Factor,
           categoryId: category.id,
           lastEntryPrice: mikroProduct.lastEntryPrice,
           lastEntryDate: mikroProduct.lastEntryDate,
@@ -289,12 +323,17 @@ class SyncService {
           salesHistory: salesHistoryJson,
           pendingCustomerOrders: pendingSales,
           pendingPurchaseOrders: pendingPurchases,
+          pendingCustomerOrdersByWarehouse: pendingSalesByWarehouse,
           active: true,
         },
-        create: {
-          mikroCode: mikroProduct.code,
-          name: mikroProduct.name,
-          unit: mikroProduct.unit,
+          create: {
+            mikroCode: mikroProduct.code,
+            name: mikroProduct.name,
+            foreignName: mikroProduct.foreignName || null,
+            brandCode: mikroProduct.brandCode || null,
+            unit: mikroProduct.unit,
+            unit2,
+            unit2Factor,
           categoryId: category.id,
           lastEntryPrice: mikroProduct.lastEntryPrice,
           lastEntryDate: mikroProduct.lastEntryDate,
@@ -305,6 +344,7 @@ class SyncService {
           salesHistory: salesHistoryJson,
           pendingCustomerOrders: pendingSales,
           pendingPurchaseOrders: pendingPurchases,
+          pendingCustomerOrdersByWarehouse: pendingSalesByWarehouse,
           excessStock: 0,
           prices: {},
           active: true,
@@ -373,6 +413,164 @@ class SyncService {
     return syncLog.id;
   }
 
+  async startImageSyncForProducts(productIds: string[]): Promise<string> {
+    const syncLog = await prisma.syncLog.create({
+      data: {
+        syncType: 'MANUAL',
+        status: 'RUNNING',
+        startedAt: new Date(),
+        details: {
+          scope: 'SELECTED',
+          selectedCount: productIds.length,
+        },
+      },
+    });
+
+    this.runImageSyncForProducts(productIds, syncLog.id).catch((error) => {
+      console.error('Background selected image sync error:', error);
+    });
+
+    return syncLog.id;
+  }
+
+  async runImageSyncForProducts(
+    productIds: string[],
+    syncLogId: string
+  ): Promise<{
+    success: boolean;
+    stats: {
+      downloaded: number;
+      skipped: number;
+      failed: number;
+    };
+    error?: string;
+  }> {
+    try {
+      console.log('Secili urunler icin resim senkronu basliyor...');
+
+      const productsForImageSync = await prisma.product.findMany({
+        where: {
+          id: { in: productIds },
+          active: true,
+          imageUrl: null,
+        },
+        select: {
+          id: true,
+          mikroCode: true,
+          name: true,
+          imageUrl: true,
+        },
+      });
+
+      if (productsForImageSync.length === 0) {
+        await prisma.syncLog.update({
+          where: { id: syncLogId },
+          data: {
+            status: 'SUCCESS',
+            imagesDownloaded: 0,
+            imagesSkipped: 0,
+            imagesFailed: 0,
+            completedAt: new Date(),
+          },
+        });
+
+        return {
+          success: true,
+          stats: {
+            downloaded: 0,
+            skipped: 0,
+            failed: 0,
+          },
+        };
+      }
+
+      const codes = productsForImageSync.map((product) => product.mikroCode);
+      const guidRows = await mikroService.getProductGuidsByCodes(codes);
+      const guidMap = new Map(guidRows.map((row) => [row.code, row.guid]));
+
+      const productsWithGuid = productsForImageSync
+        .map((product) => ({
+          ...product,
+          guid: guidMap.get(product.mikroCode),
+        }))
+        .filter((product) => product.guid);
+
+      const productsMissingGuid = productsForImageSync.filter(
+        (product) => !guidMap.get(product.mikroCode)
+      );
+
+      if (productsMissingGuid.length > 0) {
+        await prisma.product.updateMany({
+          where: { id: { in: productsMissingGuid.map((product) => product.id) } },
+          data: {
+            imageSyncStatus: 'SKIPPED',
+            imageSyncErrorType: 'NO_GUID',
+            imageSyncErrorMessage: 'GUID bulunamadi',
+            imageSyncUpdatedAt: new Date(),
+            imageChecksum: null,
+          },
+        });
+      }
+
+      const imageStats = await imageService.syncAllImages(productsWithGuid as any, syncLogId);
+      const missingGuidWarnings = productsMissingGuid.slice(0, 50).map((product) => ({
+        type: 'NO_GUID',
+        productCode: product.mikroCode,
+        productName: product.name,
+        message: 'GUID bulunamadi',
+      }));
+
+      const warnings = [...imageStats.warnings, ...missingGuidWarnings];
+      const skippedTotal = imageStats.skipped + productsMissingGuid.length;
+
+      await prisma.syncLog.update({
+        where: { id: syncLogId },
+        data: {
+          status: 'SUCCESS',
+          categoriesCount: 0,
+          productsCount: 0,
+          imagesDownloaded: imageStats.downloaded,
+          imagesSkipped: skippedTotal,
+          imagesFailed: imageStats.failed,
+          warnings: warnings.length > 0 ? warnings : undefined,
+          completedAt: new Date(),
+        },
+      });
+
+      console.log('Secili resim senkronu tamamlandi!');
+
+      return {
+        success: true,
+        stats: {
+          downloaded: imageStats.downloaded,
+          skipped: skippedTotal,
+          failed: imageStats.failed,
+        },
+      };
+    } catch (error: any) {
+      console.error('Secili resim senkronu hatasi:', error);
+
+      await prisma.syncLog.update({
+        where: { id: syncLogId },
+        data: {
+          status: 'FAILED',
+          errorMessage: error.message,
+          completedAt: new Date(),
+        },
+      });
+
+      return {
+        success: false,
+        stats: {
+          downloaded: 0,
+          skipped: 0,
+          failed: 0,
+        },
+        error: error.message,
+      };
+    }
+  }
+
   /**
    * Sadece resim senkronizasyonunu çalıştır
    */
@@ -404,22 +602,47 @@ class SyncService {
 
       console.log(`📊 ${productsForImageSync.length} ürün için resim sync edilecek`);
 
-      // Mikro'dan GUID'leri al
-      const mikroProducts = await mikroService.getProducts();
-      const guidMap = new Map(mikroProducts.map(p => [p.code, p.guid]));
+      const codes = productsForImageSync.map((product) => product.mikroCode);
+      const guidRows = await mikroService.getProductGuidsByCodes(codes);
+      const guidMap = new Map(guidRows.map((row) => [row.code, row.guid]));
 
-      // GUID'leri ekle
       const productsWithGuid = productsForImageSync
-        .map(p => ({
-          ...p,
-          guid: guidMap.get(p.mikroCode),
+        .map((product) => ({
+          ...product,
+          guid: guidMap.get(product.mikroCode),
         }))
-        .filter(p => p.guid); // GUID olmayanları atla
+        .filter((product) => product.guid);
+
+      const productsMissingGuid = productsForImageSync.filter(
+        (product) => !guidMap.get(product.mikroCode)
+      );
+
+      if (productsMissingGuid.length > 0) {
+        await prisma.product.updateMany({
+          where: { id: { in: productsMissingGuid.map((product) => product.id) } },
+          data: {
+            imageSyncStatus: 'SKIPPED',
+            imageSyncErrorType: 'NO_GUID',
+            imageSyncErrorMessage: 'GUID bulunamadi',
+            imageSyncUpdatedAt: new Date(),
+            imageChecksum: null,
+          },
+        });
+      }
 
       console.log(`✅ ${productsWithGuid.length} ürün için GUID bulundu`);
 
       // Resimleri sync et
       const imageStats = await imageService.syncAllImages(productsWithGuid as any, syncLogId);
+      const missingGuidWarnings = productsMissingGuid.slice(0, 50).map((product) => ({
+        type: 'NO_GUID',
+        productCode: product.mikroCode,
+        productName: product.name,
+        message: 'GUID bulunamadi',
+      }));
+
+      const warnings = [...imageStats.warnings, ...missingGuidWarnings];
+      const skippedTotal = imageStats.skipped + productsMissingGuid.length;
 
       // Sync log güncelle (warnings ile birlikte)
       await prisma.syncLog.update({
@@ -429,21 +652,25 @@ class SyncService {
           categoriesCount: 0,
           productsCount: 0,
           imagesDownloaded: imageStats.downloaded,
-          imagesSkipped: imageStats.skipped,
+          imagesSkipped: skippedTotal,
           imagesFailed: imageStats.failed,
-          warnings: imageStats.warnings.length > 0 ? imageStats.warnings : undefined,
+          warnings: warnings.length > 0 ? warnings : undefined,
           completedAt: new Date(),
         },
       });
 
       console.log('🎉 Resim senkronizasyonu tamamlandı!');
       console.log(`  ✅ İndirilen: ${imageStats.downloaded}`);
-      console.log(`  ⏭️ Atlanan: ${imageStats.skipped}`);
+      console.log(`  ⏭️ Atlanan: ${skippedTotal}`);
       console.log(`  ❌ Başarısız: ${imageStats.failed}`);
 
       return {
         success: true,
-        stats: imageStats,
+        stats: {
+          downloaded: imageStats.downloaded,
+          skipped: skippedTotal,
+          failed: imageStats.failed,
+        },
       };
     } catch (error: any) {
       console.error('❌ Resim senkronizasyon hatası:', error);

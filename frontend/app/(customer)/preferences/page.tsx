@@ -5,14 +5,12 @@ import { useRouter } from 'next/navigation';
 import { useAuthStore } from '@/lib/store/authStore';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
-import { LogoLink } from '@/components/ui/Logo';
-import { MobileMenu } from '@/components/ui/MobileMenu';
 import apiClient from '@/lib/api/client';
 
 export default function PreferencesPage() {
   const router = useRouter();
-  const { user, loadUserFromStorage, logout } = useAuthStore();
-  const [vatDisplayPreference, setVatDisplayPreference] = useState<'WITH_VAT' | 'WITHOUT_VAT'>('WITH_VAT');
+  const { user, loadUserFromStorage, refreshUser } = useAuthStore();
+  const [vatDisplayPreference, setVatDisplayPreference] = useState<'WITH_VAT' | 'WITHOUT_VAT'>('WITHOUT_VAT');
   const [isSaving, setIsSaving] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
@@ -22,8 +20,7 @@ export default function PreferencesPage() {
 
   useEffect(() => {
     if (user) {
-      // @ts-ignore
-      setVatDisplayPreference(user.vatDisplayPreference || 'WITH_VAT');
+      setVatDisplayPreference(user.vatDisplayPreference || 'WITHOUT_VAT');
     }
   }, [user]);
 
@@ -39,7 +36,7 @@ export default function PreferencesPage() {
       setMessage({ type: 'success', text: 'Ayarlar başarıyla kaydedildi!' });
 
       // Refresh user data
-      loadUserFromStorage();
+      await refreshUser();
     } catch (error: any) {
       setMessage({ type: 'error', text: error.response?.data?.error || 'Ayarlar kaydedilemedi' });
     } finally {
@@ -58,56 +55,7 @@ export default function PreferencesPage() {
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Header */}
-      <header className="bg-gradient-to-r from-primary-700 to-primary-600 shadow-lg">
-        <div className="container-custom py-4">
-          <div className="flex justify-between items-center">
-            <div className="flex items-center gap-6">
-              <LogoLink href="/products" variant="light" />
-              <div>
-                <h1 className="text-xl font-bold text-white">⚙️ Tercihler</h1>
-                <p className="text-sm text-primary-100">Görünüm ve tercihler</p>
-              </div>
-            </div>
-            {/* Desktop Navigation */}
-            <div className="hidden lg:flex gap-3">
-              <Button
-                variant="secondary"
-                onClick={() => router.push('/products')}
-                className="bg-white text-primary-700 hover:bg-primary-50"
-              >
-                🛍️ Ürünler
-              </Button>
-              <Button
-                variant="secondary"
-                onClick={() => router.push('/profile')}
-                className="bg-white text-primary-700 hover:bg-primary-50"
-              >
-                👤 Profil
-              </Button>
-              <Button
-                variant="ghost"
-                onClick={() => { logout(); router.push('/login'); }}
-                className="text-white hover:bg-primary-800"
-              >
-                Çıkış
-              </Button>
-            </div>
 
-            {/* Mobile Navigation */}
-            <MobileMenu
-              items={[
-                { label: 'Ürünler', href: '/products', icon: '🛍️' },
-                { label: 'Sepetim', href: '/cart', icon: '🛒' },
-                { label: 'Siparişlerim', href: '/my-orders', icon: '📦' },
-                { label: 'Profilim', href: '/profile', icon: '👤' },
-                { label: 'Tercihler', href: '/preferences', icon: '⚙️' },
-              ]}
-              user={user}
-              onLogout={() => { logout(); router.push('/login'); }}
-            />
-          </div>
-        </div>
-      </header>
 
       <div className="container-custom py-8">
         <div className="max-w-3xl mx-auto">

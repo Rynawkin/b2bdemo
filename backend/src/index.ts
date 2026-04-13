@@ -14,6 +14,33 @@ import syncService from './services/sync.service';
 import orderTrackingService from './services/order-tracking.service';
 import emailService from './services/email.service';
 import priceSyncService from './services/priceSync.service';
+import quoteService from './services/quote.service';
+import vadeSyncService from './services/vadeSync.service';
+import vadeNotificationService from './services/vadeNotification.service';
+import reportsService from './services/reports.service';
+import productComplementService from './services/product-complement.service';
+import customerActivityService from './services/customer-activity.service';
+import eInvoiceService from './services/einvoice.service';
+import { prisma } from './utils/prisma';
+
+
+const getDateInTimeZone = (date: Date, timeZone: string): Date => {
+  const formatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  });
+  const [year, month, day] = formatter.format(date).split('-').map(Number);
+  return new Date(Date.UTC(year, month - 1, day));
+};
+
+const getYesterdayInTimeZone = (timeZone: string): Date => {
+  const today = getDateInTimeZone(new Date(), timeZone);
+  const yesterday = new Date(today);
+  yesterday.setUTCDate(today.getUTCDate() - 1);
+  return yesterday;
+};
 
 // Express app
 const app: Application = express();
@@ -82,6 +109,8 @@ app.use(errorHandler);
 // ==================== CRON JOBS ====================
 
 if (config.enableCron) {
+  const cronOptions = { timezone: config.cronTimezone };
+  let kioskSyncInProgress = false;
   console.log('🕐 Cron job aktif - Senkronizasyon planı:', config.syncCronSchedule);
 
   // B2B Stok Senkronizasyonu
@@ -97,7 +126,7 @@ if (config.enableCron) {
     } catch (error) {
       console.error('❌ Cron job hatası:', error);
     }
-  });
+  }, cronOptions);
 
   console.log("Price sync cron schedule:", config.priceSyncCronSchedule);
   cron.schedule(config.priceSyncCronSchedule, async () => {
@@ -112,7 +141,105 @@ if (config.enableCron) {
     } catch (error) {
       console.error("Price cron job error:", error);
     }
-  });
+  }, cronOptions);
+
+  console.log('Quote sync cron schedule:', config.quoteSyncCronSchedule, 'Timezone:', config.cronTimezone);
+  cron.schedule(config.quoteSyncCronSchedule, async () => {
+    console.log('Quote sync started...');
+    try {
+      const result = await quoteService.syncQuotesFromMikro();
+      console.log('Quote sync completed:', result);
+    } catch (error) {
+      console.error('Quote sync error:', error);
+    }
+  }, cronOptions);
+
+  console.log('Vade sync cron schedule:', config.vadeSyncCronSchedule, 'Timezone:', config.cronTimezone);
+  cron.schedule(config.vadeSyncCronSchedule, async () => {
+    console.log('Vade sync started...');
+    try {
+      const result = await vadeSyncService.syncFromMikro('AUTO');
+      if (result.success) {
+        console.log('Vade sync completed:', result);
+      } else {
+        console.error('Vade sync failed:', result.error);
+      }
+    } catch (error) {
+      console.error('Vade sync error:', error);
+    }
+  }, cronOptions);
+
+  console.log('Vade reminder cron schedule:', config.vadeReminderCronSchedule, 'Timezone:', config.cronTimezone);
+  cron.schedule(config.vadeReminderCronSchedule, async () => {
+
+    try {
+      const result = await vadeNotificationService.processNoteReminders();
+      if (result.notified > 0) {
+        console.log('Vade reminders sent:', result.notified);
+      }
+    } catch (error) {
+      console.error('Vade reminder error:', error);
+    }
+  }, cronOptions);
+
+  console.log('Margin compliance report cron schedule:', config.marginReportCronSchedule, 'Timezone:', config.cronTimezone);
+  cron.schedule(config.marginReportCronSchedule, async () => {
+    console.log('Margin compliance report sync started...');
+    const reportDate = getYesterdayInTimeZone(config.cronTimezone);
+
+    try {
+      const syncResult = await reportsService.syncMarginComplianceReportForDate(reportDate);
+      if (!syncResult.success) {
+        console.error('Margin compliance report sync failed:', syncResult.error);
+        return;
+      }
+
+      const settings = await prisma.settings.findFirst();
+      const recipients = settings?.marginReportEmailRecipients || [];
+      if (!settings?.marginReportEmailEnabled || recipients.length === 0) {
+        console.log('Margin compliance report email disabled or no recipients configured.');
+        return;
+      }
+
+      const emailPayload = await reportsService.buildMarginComplianceEmailPayload(
+        reportDate,
+        settings?.marginReportEmailColumns || []
+      );
+
+      await emailService.sendMarginComplianceReportSummary({
+        recipients,
+        reportDate,
+        summary: emailPayload.summary,
+        subject: settings?.marginReportEmailSubject || undefined,
+        attachment: emailPayload.attachment,
+      });
+    } catch (error) {
+      console.error('Margin compliance report cron error:', error);
+    }
+  }, cronOptions);
+
+  console.log('Product complement cron schedule:', config.productComplementCronSchedule, 'Timezone:', config.cronTimezone);
+  cron.schedule(config.productComplementCronSchedule, async () => {
+    console.log('Product complement sync started...');
+    try {
+      const result = await productComplementService.syncAutoRecommendations();
+      console.log('Product complement sync completed:', result);
+    } catch (error) {
+      console.error('Product complement cron error:', error);
+    }
+  }, cronOptions);
+
+  console.log('Customer activity cleanup schedule:', config.analyticsCleanupCronSchedule, 'Timezone:', config.cronTimezone);
+  cron.schedule(config.analyticsCleanupCronSchedule, async () => {
+    try {
+      const result = await customerActivityService.cleanupOldEvents(config.analyticsRetentionDays);
+      if (result.deleted > 0) {
+        console.log('Customer activity cleanup removed records:', result.deleted);
+      }
+    } catch (error) {
+      console.error('Customer activity cleanup error:', error);
+    }
+  }, cronOptions);
 
   // Sipariş Takip Modülü - Otomatik sync + mail
   (async () => {
@@ -145,7 +272,7 @@ if (config.enableCron) {
             } catch (error) {
               console.error('❌ Müşteri sipariş takip cron job hatası:', error);
             }
-          });
+          }, cronOptions);
         } else {
           console.log('⏸️  Müşteri sipariş takip cron job devre dışı');
         }
@@ -175,7 +302,7 @@ if (config.enableCron) {
             } catch (error) {
               console.error('❌ Tedarikçi sipariş takip cron job hatası:', error);
             }
-          });
+          }, cronOptions);
         } else {
           console.log('⏸️  Tedarikçi sipariş takip cron job devre dışı');
         }
@@ -186,6 +313,70 @@ if (config.enableCron) {
       console.error('❌ Sipariş takip settings yükleme hatası:', error);
     }
   })();
+
+  if (config.orderTrackingKioskSyncEnabled) {
+    const runKioskPendingOrderSync = async (source: 'CRON' | 'BOOT') => {
+      if (kioskSyncInProgress) {
+        console.log(`⏭️ Kiosk siparis sync atlandi (${source}) - onceki islem devam ediyor`);
+        return;
+      }
+
+      kioskSyncInProgress = true;
+      try {
+        console.log(`🧭 Kiosk siparis sync basladi (${source})...`);
+        const result = await orderTrackingService.syncPendingOrders();
+        if (result.success) {
+          console.log(
+            `✅ Kiosk siparis sync tamamlandi (${source}) - Siparis: ${result.ordersCount}, Musteri: ${result.customersCount}`
+          );
+        } else {
+          console.error(`❌ Kiosk siparis sync basarisiz (${source}):`, result.message);
+        }
+      } catch (error) {
+        console.error(`❌ Kiosk siparis sync hatasi (${source}):`, error);
+      } finally {
+        kioskSyncInProgress = false;
+      }
+    };
+
+    console.log(
+      'Kiosk pending-orders sync cron schedule:',
+      config.orderTrackingKioskSyncCronSchedule,
+      'Timezone:',
+      config.cronTimezone
+    );
+    cron.schedule(config.orderTrackingKioskSyncCronSchedule, async () => {
+      await runKioskPendingOrderSync('CRON');
+    }, cronOptions);
+
+    // Ensure kiosk data is warmed right after process start.
+    runKioskPendingOrderSync('BOOT').catch((error) => {
+      console.error('❌ Kiosk siparis boot sync hatasi:', error);
+    });
+  } else {
+    console.log('⏸️  Kiosk pending-orders sync cron job devre disi');
+  }
+}
+
+if (config.einvoiceAutoImportEnabled) {
+  const cronOptions = { timezone: config.cronTimezone };
+  console.log('E-invoice auto import cron schedule:', config.einvoiceAutoImportCronSchedule, 'Timezone:', config.cronTimezone);
+  cron.schedule(config.einvoiceAutoImportCronSchedule, async () => {
+    console.log('E-invoice auto import started...');
+    try {
+      const result = await eInvoiceService.importDocumentsFromDirectory();
+      console.log('E-invoice auto import completed:', {
+        scanned: result.scanned,
+        processed: result.processed,
+        uploaded: result.uploaded,
+        updated: result.updated,
+        skippedExisting: result.skippedExisting,
+        failed: result.failed,
+      });
+    } catch (error) {
+      console.error('E-invoice auto import cron error:', error);
+    }
+  }, cronOptions);
 }
 
 // ==================== SERVER START ====================

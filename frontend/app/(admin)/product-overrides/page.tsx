@@ -1,22 +1,24 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
 import toast from 'react-hot-toast';
 import adminApi from '@/lib/api/admin';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Badge } from '@/components/ui/Badge';
-import { LogoLink } from '@/components/ui/Logo';
 import { formatCurrency } from '@/lib/utils/format';
+import { getUnitConversionLabel } from '@/lib/utils/unit';
 import { getCustomerTypeName, CUSTOMER_TYPES } from '@/lib/utils/customerTypes';
+import { buildSearchTokens, matchesSearchTokens, normalizeSearchText } from '@/lib/utils/search';
 
 interface Product {
   id: string;
   name: string;
   mikroCode: string;
   unit: string;
+  unit2?: string | null;
+  unit2Factor?: number | null;
   excessStock: number;
   prices: any;
   category: { id: string; name: string };
@@ -24,7 +26,6 @@ interface Product {
 }
 
 export default function AdminProductOverridesPage() {
-  const router = useRouter();
   const [products, setProducts] = useState<Product[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
@@ -161,10 +162,12 @@ export default function AdminProductOverridesPage() {
     }
   };
 
-  const filteredProducts = products.filter(p =>
-    p.name.toLowerCase().includes(searchInput.toLowerCase()) ||
-    p.mikroCode.toLowerCase().includes(searchInput.toLowerCase())
-  );
+  const filteredProducts = products.filter((product) => {
+    const tokens = buildSearchTokens(searchInput);
+    if (tokens.length === 0) return true;
+    const haystack = normalizeSearchText(`${product.name} ${product.mikroCode}`);
+    return matchesSearchTokens(haystack, tokens);
+  });
 
   if (isLoading) {
     return (
@@ -176,31 +179,14 @@ export default function AdminProductOverridesPage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Header */}
-      <header className="bg-gradient-to-r from-primary-700 to-primary-600 shadow-lg">
-        <div className="container-custom py-4">
-          <div className="flex justify-between items-center">
-            <div className="flex items-center gap-6">
-              <LogoLink href="/dashboard" variant="light" />
-              <div>
-                <h1 className="text-xl font-bold text-white">🏷️ Ürün Bazlı Fiyatlandırma</h1>
-                <p className="text-sm text-primary-100">Özel ürünler için kar marjı belirleyin</p>
-              </div>
-            </div>
-            <div className="flex gap-3">
-              <Button
-                variant="secondary"
-                onClick={() => router.push('/dashboard')}
-                className="bg-white text-primary-700 hover:bg-primary-50"
-              >
-                ← Dashboard
-              </Button>
-            </div>
-          </div>
-        </div>
-      </header>
 
       <div className="container-custom py-8">
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900">Urun Bazli Fiyatlandirma</h1>
+            <p className="text-sm text-gray-600">Ozel urunler icin kar marji belirleyin</p>
+          </div>
+        </div>
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Ürün Listesi */}
           <div className="lg:col-span-2">
@@ -235,7 +221,9 @@ export default function AdminProductOverridesPage() {
                     <p className="text-gray-600">Ürün bulunamadı</p>
                   </div>
                 ) : (
-                  filteredProducts.map((product) => (
+                  filteredProducts.map((product) => {
+                    const unitLabel = getUnitConversionLabel(product.unit, product.unit2, product.unit2Factor);
+                    return (
                     <div
                       key={product.id}
                       className={`p-4 border-2 rounded-lg cursor-pointer hover:shadow-md transition-all ${
@@ -261,6 +249,9 @@ export default function AdminProductOverridesPage() {
                           {product.excessStock} {product.unit}
                         </Badge>
                       </div>
+                      {unitLabel && (
+                        <div className="mt-2 text-xs text-gray-500">{unitLabel}</div>
+                      )}
 
                       {selectedProduct?.id === product.id && (
                         <div className="mt-3 pt-3 border-t border-primary-200">
@@ -278,7 +269,8 @@ export default function AdminProductOverridesPage() {
                         </div>
                       )}
                     </div>
-                  ))
+                  );
+                  })
                 )}
               </div>
             </Card>
@@ -309,11 +301,11 @@ export default function AdminProductOverridesPage() {
                   <h4 className="text-sm font-bold text-gray-900 mb-3">📷 Ürün Fotoğrafı</h4>
                   {selectedProduct.imageUrl ? (
                     <div className="space-y-3">
-                      <div className="relative group">
+                      <div className="relative group bg-white rounded-lg border-2 border-gray-300 overflow-hidden aspect-square">
                         <img
                           src={`http://localhost:5000${selectedProduct.imageUrl}`}
                           alt={selectedProduct.name}
-                          className="w-full h-40 object-cover rounded-lg border-2 border-gray-300"
+                          className="w-full h-full object-contain"
                         />
                         <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-30 transition-all rounded-lg flex items-center justify-center">
                           <button
@@ -337,7 +329,7 @@ export default function AdminProductOverridesPage() {
                     </div>
                   ) : (
                     <div className="space-y-3">
-                      <div className="w-full h-40 bg-gradient-to-br from-gray-100 to-gray-200 rounded-lg flex items-center justify-center border-2 border-dashed border-gray-300">
+                      <div className="w-full aspect-square bg-white rounded-lg flex items-center justify-center border-2 border-dashed border-gray-300">
                         <div className="text-center text-gray-400">
                           <svg className="w-12 h-12 mx-auto mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />

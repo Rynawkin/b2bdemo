@@ -9,6 +9,15 @@ import {
   Cart,
   AddToCartRequest,
   Order,
+  OrderRequest,
+  Quote,
+  Task,
+  TaskDetail,
+  TaskView,
+  TaskComment,
+  TaskAttachment,
+  Notification,
+  EInvoiceDocument,
 } from '@/types';
 
 export const customerApi = {
@@ -17,7 +26,9 @@ export const customerApi = {
     categoryId?: string;
     search?: string;
     warehouse?: string;
-    mode?: 'all' | 'discounted' | 'excess' | 'purchased';
+    mode?: 'all' | 'discounted' | 'excess' | 'purchased' | 'agreements';
+    limit?: number;
+    offset?: number;
   }): Promise<{ products: Product[] }> => {
     const response = await apiClient.get('/products', { params });
     return response.data;
@@ -25,6 +36,15 @@ export const customerApi = {
 
   getProductById: async (id: string): Promise<Product> => {
     const response = await apiClient.get(`/products/${id}`);
+    return response.data;
+  },
+  getProductRecommendations: async (id: string): Promise<{ products: Product[] }> => {
+    const response = await apiClient.get(`/products/${id}/recommendations`);
+    return response.data;
+  },
+
+  getCartRecommendations: async (): Promise<{ groups: Array<{ baseProduct: { id: string; name: string; mikroCode: string }; products: Product[] }> }> => {
+    const response = await apiClient.get('/recommendations/cart');
     return response.data;
   },
 
@@ -51,8 +71,11 @@ export const customerApi = {
     return response.data;
   },
 
-  updateCartItem: async (itemId: string, quantity: number): Promise<{ message: string }> => {
-    const response = await apiClient.put(`/cart/${itemId}`, { quantity });
+  updateCartItem: async (
+    itemId: string,
+    data: { quantity?: number; lineNote?: string | null }
+  ): Promise<{ message: string }> => {
+    const response = await apiClient.put(`/cart/${itemId}`, data);
     return response.data;
   },
 
@@ -62,8 +85,11 @@ export const customerApi = {
   },
 
   // Orders
-  createOrder: async (): Promise<{ orderId: string; orderNumber: string; message: string }> => {
-    const response = await apiClient.post('/orders');
+  createOrder: async (data?: {
+    customerOrderNumber?: string;
+    deliveryLocation?: string;
+  }): Promise<{ orderId: string; orderNumber: string; message: string }> => {
+    const response = await apiClient.post('/orders', data);
     return response.data;
   },
 
@@ -76,6 +102,151 @@ export const customerApi = {
     const response = await apiClient.get(`/orders/${id}`);
     return response.data;
   },
+
+  // Order Requests
+  getOrderRequestPendingCount: async (): Promise<{ count: number }> => {
+    const response = await apiClient.get('/order-requests/pending-count');
+    return response.data;
+  },
+  getOrderRequests: async (): Promise<{ requests: OrderRequest[] }> => {
+    const response = await apiClient.get('/order-requests');
+    return response.data;
+  },
+
+  createOrderRequest: async (note?: string): Promise<{ request: OrderRequest }> => {
+    const response = await apiClient.post('/order-requests', note ? { note } : undefined);
+    return response.data;
+  },
+
+  convertOrderRequest: async (
+    id: string,
+    data: {
+      items?: Array<{ id: string; priceType?: 'INVOICED' | 'WHITE'; quantity?: number }>;
+      note?: string;
+      customerOrderNumber?: string;
+      deliveryLocation?: string;
+    }
+  ): Promise<{ orderId: string; orderNumber: string }> => {
+    const response = await apiClient.post(`/order-requests/${id}/convert`, data);
+    return response.data;
+  },
+
+  rejectOrderRequest: async (id: string, note?: string): Promise<{ status: string }> => {
+    const response = await apiClient.post(`/order-requests/${id}/reject`, note ? { note } : undefined);
+    return response.data;
+  },
+
+  // Quotes
+  getQuotes: async (): Promise<{ quotes: Quote[] }> => {
+    const response = await apiClient.get('/quotes');
+    return response.data;
+  },
+
+  getQuoteById: async (id: string): Promise<{ quote: Quote }> => {
+    const response = await apiClient.get(`/quotes/${id}`);
+    return response.data;
+  },
+
+  acceptQuote: async (id: string): Promise<{ quote: Quote }> => {
+    const response = await apiClient.post(`/quotes/${id}/accept`);
+    return response.data;
+  },
+
+  rejectQuote: async (id: string): Promise<{ quote: Quote }> => {
+    const response = await apiClient.post(`/quotes/${id}/reject`);
+    return response.data;
+  },
+
+  // Tasks (customer)
+  getTaskPreferences: async (): Promise<{ preferences: { defaultView: TaskView; colorRules?: any[] | null } }> => {
+    const response = await apiClient.get('/tasks/preferences');
+    return response.data;
+  },
+
+  updateTaskPreferences: async (data: { defaultView?: TaskView; colorRules?: any[] | null }): Promise<{ preferences: { defaultView: TaskView; colorRules?: any[] | null } }> => {
+    const response = await apiClient.put('/tasks/preferences', data);
+    return response.data;
+  },
+
+  getTasks: async (params?: {
+    status?: string | string[];
+    search?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<{ tasks: Task[] }> => {
+    const response = await apiClient.get('/tasks', { params });
+    return response.data;
+  },
+
+  getTaskById: async (id: string): Promise<{ task: TaskDetail }> => {
+    const response = await apiClient.get(`/tasks/${id}`);
+    return response.data;
+  },
+
+  createTask: async (data: {
+    title: string;
+    description?: string | null;
+    type?: string;
+    priority?: string;
+  }): Promise<{ task: TaskDetail }> => {
+    const response = await apiClient.post('/tasks', data);
+    return response.data;
+  },
+
+  addTaskComment: async (id: string, data: { body: string }): Promise<{ comment: TaskComment }> => {
+    const response = await apiClient.post(`/tasks/${id}/comments`, data);
+    return response.data;
+  },
+
+  addTaskAttachment: async (id: string, formData: FormData): Promise<{ attachment: TaskAttachment }> => {
+    const response = await apiClient.post(`/tasks/${id}/attachments`, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return response.data;
+  },
+
+  // Notifications
+  getNotifications: async (params?: { unreadOnly?: boolean; limit?: number; offset?: number }): Promise<{ notifications: Notification[]; unreadCount: number }> => {
+    const response = await apiClient.get('/notifications', { params });
+    return response.data;
+  },
+
+  markNotificationsRead: async (ids: string[]): Promise<{ updated: number }> => {
+    const response = await apiClient.post('/notifications/read', { ids });
+    return response.data;
+  },
+
+  markNotificationsReadAll: async (): Promise<{ updated: number }> => {
+    const response = await apiClient.post('/notifications/read-all');
+    return response.data;
+  },
+
+  // E-Invoices (customer)
+  getInvoices: async (params?: {
+    search?: string;
+    invoicePrefix?: string;
+    fromDate?: string;
+    toDate?: string;
+    page?: number;
+    limit?: number;
+  }): Promise<{
+    documents: EInvoiceDocument[];
+    pagination: { page: number; limit: number; total: number; totalPages: number };
+  }> => {
+    const response = await apiClient.get('/invoices', { params });
+    return response.data;
+  },
+
+  downloadInvoice: async (id: string): Promise<Blob> => {
+    const response = await apiClient.get(`/invoices/${id}/download`, {
+      responseType: 'blob',
+    });
+    return response.data;
+  },
 };
 
 export default customerApi;
+
+
+
+

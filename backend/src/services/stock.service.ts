@@ -5,6 +5,7 @@
  */
 
 import { prisma } from '../utils/prisma';
+import { splitSearchTokens } from '../utils/search';
 import mikroService from './mikroFactory.service';
 
 class StockService {
@@ -260,30 +261,63 @@ class StockService {
     categoryId?: string;
     search?: string;
     minStock?: number;
+    limit?: number;
+    offset?: number;
+    excludeProductCodes?: string[];
   }): Promise<any[]> {
     const where: any = {
       excessStock: { gt: 0 },
       active: true,
     };
 
+    const excludedCodes = Array.from(
+      new Set(
+        (filters?.excludeProductCodes || [])
+          .map((code) => String(code || '').trim().toUpperCase())
+          .filter(Boolean)
+      )
+    );
+    if (excludedCodes.length > 0) {
+      where.mikroCode = { notIn: excludedCodes };
+    }
+
     if (filters?.categoryId) {
       where.categoryId = filters.categoryId;
     }
 
-    if (filters?.search) {
-      where.OR = [
-        { name: { contains: filters.search, mode: 'insensitive' } },
-        { mikroCode: { contains: filters.search, mode: 'insensitive' } },
-      ];
+    const searchTokens = splitSearchTokens(filters?.search);
+    if (searchTokens.length > 0) {
+      where.AND = searchTokens.map((token) => ({
+        OR: [
+          { name: { contains: token, mode: 'insensitive' } },
+          { mikroCode: { contains: token, mode: 'insensitive' } },
+        ],
+      }));
     }
 
     if (filters?.minStock) {
       where.excessStock = { gte: filters.minStock };
     }
 
+    const take = filters?.limit && filters.limit > 0 ? Math.floor(filters.limit) : undefined;
+    const skip = take ? Math.max(0, Math.floor(filters?.offset || 0)) : 0;
+
     const products = await prisma.product.findMany({
       where,
-      include: {
+      select: {
+        id: true,
+        name: true,
+        mikroCode: true,
+        unit: true,
+        unit2: true,
+        unit2Factor: true,
+        vatRate: true,
+        excessStock: true,
+        imageUrl: true,
+        warehouseStocks: true,
+        warehouseExcessStocks: true,
+        pendingCustomerOrdersByWarehouse: true,
+        prices: true,
         category: {
           select: {
             id: true,
@@ -294,6 +328,7 @@ class StockService {
       orderBy: {
         excessStock: 'desc',
       },
+      ...(take ? { take, skip } : {}),
     });
 
     return products;

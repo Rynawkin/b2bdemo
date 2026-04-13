@@ -19,12 +19,34 @@ export class AuthController {
       // Kullanıcıyı bul - email veya cari kodu ile
       let user = await prisma.user.findUnique({
         where: { email },
+        include: {
+          parentCustomer: {
+            select: {
+              id: true,
+              mikroCariCode: true,
+              customerType: true,
+              priceVisibility: true,
+              vatDisplayPreference: true,
+            },
+          },
+        },
       });
 
       // Email ile bulunamadıysa, cari kodu ile dene
       if (!user) {
         user = await prisma.user.findUnique({
           where: { mikroCariCode: email },
+          include: {
+            parentCustomer: {
+              select: {
+                id: true,
+                mikroCariCode: true,
+                customerType: true,
+                priceVisibility: true,
+                vatDisplayPreference: true,
+              },
+            },
+          },
         });
       }
 
@@ -54,13 +76,22 @@ export class AuthController {
       });
 
       // Kullanıcı bilgilerini döndür
+      const effectiveMikroCode = user.mikroCariCode || user.parentCustomer?.mikroCariCode || undefined;
+      const effectiveCustomerType = user.customerType || user.parentCustomer?.customerType || undefined;
+      const effectivePriceVisibility = user.parentCustomer?.priceVisibility || user.priceVisibility;
+      const effectiveVatDisplayPreference =
+        user.parentCustomer?.vatDisplayPreference || user.vatDisplayPreference;
+
       const userResponse: UserResponse = {
         id: user.id,
-        email: user.email || user.mikroCariCode || '',
-        name: user.name,
+        email: user.email || effectiveMikroCode || '',
+        name: user.displayName || user.name,
         role: user.role,
-        customerType: user.customerType || undefined,
-        mikroCariCode: user.mikroCariCode || undefined,
+        customerType: effectiveCustomerType,
+        mikroCariCode: effectiveMikroCode,
+        priceVisibility: effectivePriceVisibility,
+        vatDisplayPreference: effectiveVatDisplayPreference,
+        parentCustomerId: user.parentCustomerId || undefined,
       };
 
       res.json({
@@ -88,9 +119,21 @@ export class AuthController {
           id: true,
           email: true,
           name: true,
+          displayName: true,
           role: true,
           customerType: true,
           mikroCariCode: true,
+          priceVisibility: true,
+          vatDisplayPreference: true,
+          parentCustomerId: true,
+          parentCustomer: {
+            select: {
+              mikroCariCode: true,
+              customerType: true,
+              priceVisibility: true,
+              vatDisplayPreference: true,
+            },
+          },
         },
       });
 
@@ -99,7 +142,23 @@ export class AuthController {
         return;
       }
 
-      res.json(user);
+      const effectiveMikroCode = user.mikroCariCode || user.parentCustomer?.mikroCariCode || undefined;
+      const effectiveCustomerType = user.customerType || user.parentCustomer?.customerType || undefined;
+      const effectivePriceVisibility = user.parentCustomer?.priceVisibility || user.priceVisibility;
+      const effectiveVatDisplayPreference =
+        user.parentCustomer?.vatDisplayPreference || user.vatDisplayPreference;
+
+      res.json({
+        id: user.id,
+        email: user.email || effectiveMikroCode || '',
+        name: user.displayName || user.name,
+        role: user.role,
+        customerType: effectiveCustomerType,
+        mikroCariCode: effectiveMikroCode,
+        priceVisibility: effectivePriceVisibility,
+        vatDisplayPreference: effectiveVatDisplayPreference,
+        parentCustomerId: user.parentCustomerId || undefined,
+      });
     } catch (error) {
       next(error);
     }

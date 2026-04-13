@@ -4,7 +4,13 @@
 
 import { Router } from 'express';
 import customerController from '../controllers/customer.controller';
-import { authenticate } from '../middleware/auth.middleware';
+import quoteController from '../controllers/quote.controller';
+import taskController from '../controllers/task.controller';
+import notificationController from '../controllers/notification.controller';
+import orderRequestController from '../controllers/order-request.controller';
+import eInvoiceController from '../controllers/einvoice.controller';
+import { authenticate, requireCustomer } from '../middleware/auth.middleware';
+import { taskUpload } from '../middleware/upload.middleware';
 import { validateBody } from '../middleware/validation.middleware';
 import { cacheMiddleware, invalidateCacheMiddleware } from '../middleware/cache.middleware';
 import { z } from 'zod';
@@ -23,7 +29,81 @@ const addToCartSchema = z.object({
 });
 
 const updateCartItemSchema = z.object({
-  quantity: z.number().int().min(1, 'Quantity must be at least 1'),
+  quantity: z.number().int().min(1, 'Quantity must be at least 1').optional(),
+  lineNote: z.string().optional().nullable(),
+});
+
+const taskTypeSchema = z.enum([
+  'BUG',
+  'IMPROVEMENT',
+  'FEATURE',
+  'OPERATION',
+  'PROCUREMENT',
+  'REPORT',
+  'DATA_SYNC',
+  'ACCESS',
+  'DESIGN_UX',
+  'OTHER',
+]);
+const taskPrioritySchema = z.enum(['NONE', 'LOW', 'MEDIUM', 'HIGH', 'URGENT']);
+const taskStatusSchema = z.enum(['NEW', 'TRIAGE', 'IN_PROGRESS', 'WAITING', 'REVIEW', 'DONE', 'CANCELLED']);
+const taskViewSchema = z.enum(['KANBAN', 'LIST']);
+
+const createCustomerTaskSchema = z.object({
+  title: z.string().min(1),
+  description: z.string().optional().nullable(),
+  type: taskTypeSchema.optional(),
+  priority: taskPrioritySchema.optional(),
+});
+
+const taskCommentSchema = z.object({
+  body: z.string().min(1),
+});
+
+const taskPreferencesSchema = z.object({
+  defaultView: taskViewSchema.optional(),
+  colorRules: z.array(z.any()).optional(),
+});
+
+const notificationReadSchema = z.object({
+  ids: z.array(z.string().uuid()).min(1),
+});
+
+const pushTokenSchema = z.object({
+  token: z.string().min(1),
+  platform: z.string().optional(),
+  appName: z.string().optional(),
+  deviceName: z.string().optional(),
+});
+
+const testPushSchema = z.object({
+  title: z.string().min(1).max(120).optional(),
+  body: z.string().max(500).optional(),
+  linkUrl: z.string().max(500).optional(),
+});
+
+const customerActivityEventSchema = z.object({
+  type: z.enum([
+    'PAGE_VIEW',
+    'PRODUCT_VIEW',
+    'CART_ADD',
+    'CART_REMOVE',
+    'CART_UPDATE',
+    'ACTIVE_PING',
+    'CLICK',
+    'SEARCH',
+  ]),
+  pagePath: z.string().max(500).optional(),
+  pageTitle: z.string().max(300).optional(),
+  referrer: z.string().max(500).optional(),
+  sessionId: z.string().max(120).optional(),
+  productId: z.string().uuid().optional(),
+  productCode: z.string().max(120).optional(),
+  cartItemId: z.string().uuid().optional(),
+  quantity: z.number().int().min(0).optional(),
+  durationSeconds: z.number().int().min(0).max(86400).optional(),
+  clickCount: z.number().int().min(0).max(10000).optional(),
+  meta: z.any().optional(),
 });
 
 // Products (with cache - 5 minutes TTL)
@@ -35,8 +115,8 @@ router.get(
     keyGenerator: (req) => {
       const userId = req.user?.userId || 'guest';
       const customerType = req.user?.role || 'default';
-      const { categoryId, search, warehouse, mode } = req.query;
-      return `list:${userId}:${customerType}:${mode || 'all'}:${categoryId || ''}:${search || ''}:${warehouse || ''}`;
+      const { categoryId, search, warehouse, mode, limit, offset } = req.query;
+      return `list:${userId}:${customerType}:${mode || 'all'}:${categoryId || ''}:${search || ''}:${warehouse || ''}:${limit || ''}:${offset || ''}`;
     },
   }),
   customerController.getProducts
@@ -55,6 +135,18 @@ router.get(
     },
   }),
   customerController.getProductById
+);
+router.get(
+  '/products/:id/recommendations',
+  cacheMiddleware({
+    namespace: 'recommendations',
+    ttl: 600,
+    keyGenerator: (req) => {
+      const userId = req.user?.userId || 'guest';
+      return `${req.params.id}:${userId}`;
+    },
+  }),
+  customerController.getProductRecommendations
 );
 
 // Categories (with cache - 30 minutes TTL)
@@ -91,6 +183,7 @@ router.delete(
   invalidateCacheMiddleware(['products:*', 'product:*']),
   customerController.removeFromCart
 );
+router.get('/recommendations/cart', customerController.getCartRecommendations);
 
 // Orders
 router.post(
@@ -101,4 +194,42 @@ router.post(
 router.get('/orders', customerController.getOrders);
 router.get('/orders/:id', customerController.getOrderById);
 
+// Order Requests (Sub-users -> Parent)
+router.get('/order-requests/pending-count', orderRequestController.getPendingCount);
+router.get('/order-requests', orderRequestController.getOrderRequests);
+router.post('/order-requests', orderRequestController.createOrderRequest);
+router.post('/order-requests/:id/convert', orderRequestController.convertOrderRequest);
+router.post('/order-requests/:id/reject', orderRequestController.rejectOrderRequest);
+
+// Quotes (customer)
+router.get('/quotes', requireCustomer, quoteController.getCustomerQuotes);
+router.get('/quotes/:id', requireCustomer, quoteController.getCustomerQuoteById);
+router.post('/quotes/:id/accept', requireCustomer, quoteController.acceptQuote);
+router.post('/quotes/:id/reject', requireCustomer, quoteController.rejectCustomerQuote);
+
+// Tasks (customer)
+router.get('/tasks/preferences', requireCustomer, taskController.getPreferences);
+router.put('/tasks/preferences', requireCustomer, validateBody(taskPreferencesSchema), taskController.updatePreferences);
+router.get('/tasks', requireCustomer, taskController.getCustomerTasks);
+router.post('/tasks', requireCustomer, validateBody(createCustomerTaskSchema), taskController.createCustomerTask);
+router.get('/tasks/:id', requireCustomer, taskController.getCustomerTaskById);
+router.post('/tasks/:id/comments', requireCustomer, validateBody(taskCommentSchema), taskController.addCustomerComment);
+router.post('/tasks/:id/attachments', requireCustomer, taskUpload.single('file'), taskController.addCustomerAttachment);
+
+// Notifications (customer)
+router.get('/notifications', requireCustomer, notificationController.getNotifications);
+router.post('/notifications/read', requireCustomer, validateBody(notificationReadSchema), notificationController.markRead);
+router.post('/notifications/read-all', requireCustomer, notificationController.markAllRead);
+router.post('/notifications/push/register', requireCustomer, validateBody(pushTokenSchema), notificationController.registerPushToken);
+router.post('/notifications/push/unregister', requireCustomer, validateBody(z.object({ token: z.string().min(1) })), notificationController.unregisterPushToken);
+router.post('/notifications/push/test', requireCustomer, validateBody(testPushSchema), notificationController.sendTestPush);
+
+// E-Invoices (customer)
+router.get('/invoices', requireCustomer, eInvoiceController.getMyDocuments);
+router.get('/invoices/:id/download', requireCustomer, eInvoiceController.downloadMyDocument);
+
+// Customer activity tracking
+router.post('/analytics/events', requireCustomer, validateBody(customerActivityEventSchema), customerController.trackActivityEvent);
+
 export default router;
+

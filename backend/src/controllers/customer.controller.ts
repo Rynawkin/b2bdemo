@@ -9,61 +9,31 @@ import pricingService from '../services/pricing.service';
 import priceListService from '../services/price-list.service';
 import mikroService from '../services/mikroFactory.service';
 import orderService from '../services/order.service';
-import { CustomerPriceListConfig, PriceListPair, ProductPrices } from '../types';
+import productComplementService from '../services/product-complement.service';
+import customerActivityService from '../services/customer-activity.service';
+import exclusionService from '../services/exclusion.service';
+import { splitSearchTokens } from '../utils/search';
+import { MikroCustomerSaleMovement, ProductPrices } from '../types';
+import { resolveCustomerPriceLists, resolveCustomerPriceListsForProduct } from '../utils/customerPricing';
+import { applyAgreementPrices, isAgreementActive, isAgreementApplicable, resolveAgreementPrice } from '../utils/agreements';
+import { resolveLastPriceOverride } from '../utils/lastPrice';
 
-const DEFAULT_PRICE_LISTS: CustomerPriceListConfig = {
-  BAYI: { invoiced: 6, white: 1 },
-  PERAKENDE: { invoiced: 6, white: 1 },
-  VIP: { invoiced: 6, white: 1 },
-  OZEL: { invoiced: 6, white: 1 },
-};
-
-const resolvePair = (value: any, fallback: PriceListPair): PriceListPair => {
-  const invoiced = Number(value?.invoiced);
-  const white = Number(value?.white);
+const getLastPriceGuardPrices = (
+  priceStats: any,
+  guardInvoicedListNo?: number | null,
+  guardWhiteListNo?: number | null
+): { invoiced: number; white: number } | undefined => {
+  if (!guardInvoicedListNo && !guardWhiteListNo) return undefined;
   return {
-    invoiced: Number.isFinite(invoiced) ? invoiced : fallback.invoiced,
-    white: Number.isFinite(white) ? white : fallback.white,
+    invoiced: guardInvoicedListNo
+      ? priceListService.getListPrice(priceStats, guardInvoicedListNo)
+      : 0,
+    white: guardWhiteListNo
+      ? priceListService.getListPrice(priceStats, guardWhiteListNo)
+      : 0,
   };
 };
 
-const normalizePriceListConfig = (raw: any): CustomerPriceListConfig => {
-  if (!raw || typeof raw !== 'object') {
-    return DEFAULT_PRICE_LISTS;
-  }
-
-  return {
-    BAYI: resolvePair(raw.BAYI, DEFAULT_PRICE_LISTS.BAYI),
-    PERAKENDE: resolvePair(raw.PERAKENDE, DEFAULT_PRICE_LISTS.PERAKENDE),
-    VIP: resolvePair(raw.VIP, DEFAULT_PRICE_LISTS.VIP),
-    OZEL: resolvePair(raw.OZEL, DEFAULT_PRICE_LISTS.OZEL),
-  };
-};
-
-const resolveListNo = (value: any, fallback: number, min: number, max: number): number => {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) return fallback;
-  if (parsed < min || parsed > max) return fallback;
-  return parsed;
-};
-
-const resolveCustomerPriceLists = (
-  user: {
-    customerType?: string | null;
-    invoicedPriceListNo?: number | null;
-    whitePriceListNo?: number | null;
-  },
-  settings: { customerPriceLists?: any } | null
-): PriceListPair => {
-  const config = normalizePriceListConfig(settings?.customerPriceLists);
-  const customerType = (user.customerType || 'BAYI') as keyof CustomerPriceListConfig;
-  const base = config[customerType] || DEFAULT_PRICE_LISTS.BAYI;
-
-  return {
-    invoiced: resolveListNo(user.invoicedPriceListNo, base.invoiced, 6, 10),
-    white: resolveListNo(user.whitePriceListNo, base.white, 1, 5),
-  };
-};
 
 const sumStocks = (warehouseStocks: Record<string, number>, includedWarehouses: string[]): number => {
   if (!warehouseStocks) return 0;
@@ -71,6 +41,305 @@ const sumStocks = (warehouseStocks: Record<string, number>, includedWarehouses: 
     return Object.values(warehouseStocks).reduce((sum, qty) => sum + (Number(qty) || 0), 0);
   }
   return includedWarehouses.reduce((sum, warehouse) => sum + (Number(warehouseStocks[warehouse]) || 0), 0);
+};
+
+const applyPendingOrders = (
+  warehouseStocks: Record<string, number>,
+  pendingByWarehouse: Record<string, number>
+): Record<string, number> => {
+  const result: Record<string, number> = {};
+  Object.entries(warehouseStocks || {}).forEach(([warehouse, qty]) => {
+    const pending = Number(pendingByWarehouse?.[warehouse]) || 0;
+    const available = Math.max(0, (Number(qty) || 0) - pending);
+    result[warehouse] = available;
+  });
+  return result;
+};
+
+type PriceVisibilityValue = 'INVOICED_ONLY' | 'WHITE_ONLY' | 'BOTH';
+
+const isPriceTypeAllowed = (visibility: PriceVisibilityValue | null | undefined, priceType: 'INVOICED' | 'WHITE'): boolean => {
+  if (visibility === 'WHITE_ONLY') return priceType === 'WHITE';
+  if (visibility === 'BOTH') return true;
+  return priceType === 'INVOICED';
+};
+
+const buildLastSalesMap = (sales: MikroCustomerSaleMovement[]) => {
+  const map = new Map<string, number>();
+  sales.forEach((sale) => {
+    const code = String(sale.productCode || '').trim();
+    if (!code || map.has(code)) return;
+    const price = Number(sale.unitPrice);
+    if (Number.isFinite(price) && price > 0) {
+      map.set(code, price);
+    }
+  });
+  return map;
+};
+
+const normalizeMikroCode = (value: string | null | undefined): string =>
+  String(value || '').trim().toUpperCase();
+
+const withTimeout = async <T>(promise: Promise<T>, ms: number, label: string): Promise<T> => {
+  let timer: NodeJS.Timeout | null = null;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`${label} timeout (${ms}ms)`)), ms);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+};
+
+const loadCustomerContext = async (userId: string) => {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: {
+      id: true,
+      mikroCariCode: true,
+      customerType: true,
+      invoicedPriceListNo: true,
+      whitePriceListNo: true,
+      priceVisibility: true,
+      useLastPrices: true,
+      lastPriceGuardType: true,
+      lastPriceGuardInvoicedListNo: true,
+      lastPriceGuardWhiteListNo: true,
+      lastPriceCostBasis: true,
+      lastPriceMinCostPercent: true,
+      parentCustomerId: true,
+      parentCustomer: {
+        select: {
+          id: true,
+          mikroCariCode: true,
+          customerType: true,
+          invoicedPriceListNo: true,
+          whitePriceListNo: true,
+          priceVisibility: true,
+          useLastPrices: true,
+          lastPriceGuardType: true,
+          lastPriceGuardInvoicedListNo: true,
+          lastPriceGuardWhiteListNo: true,
+          lastPriceCostBasis: true,
+          lastPriceMinCostPercent: true,
+        },
+      },
+    },
+  });
+
+  const customer = user?.parentCustomer || user;
+  if (!customer || !customer.customerType) {
+    throw new Error('User has no customer type');
+  }
+
+  const [settings, priceListRules] = await Promise.all([
+    prisma.settings.findFirst({
+      select: {
+        includedWarehouses: true,
+        customerPriceLists: true,
+      },
+    }),
+    prisma.customerPriceListRule.findMany({
+      where: { customerId: customer.id },
+    }),
+  ]);
+
+  const basePriceListPair = resolveCustomerPriceLists(customer, settings);
+  const includedWarehouses = settings?.includedWarehouses || [];
+  const effectiveVisibility: PriceVisibilityValue | null | undefined = user?.parentCustomerId
+    ? (customer.priceVisibility === 'WHITE_ONLY' ? 'WHITE_ONLY' : 'INVOICED_ONLY')
+    : customer.priceVisibility;
+
+  return {
+    user,
+    customer,
+    settings,
+    priceListRules,
+    basePriceListPair,
+    includedWarehouses,
+    effectiveVisibility,
+  };
+};
+
+const buildCustomerProductPayloads = async (params: {
+  products: Array<{
+    id: string;
+    name: string;
+    mikroCode: string;
+    brandCode?: string | null;
+    unit: string;
+    unit2?: string | null;
+    unit2Factor?: number | null;
+    vatRate?: number | null;
+    currentCost?: number | null;
+    lastEntryPrice?: number | null;
+    excessStock: number;
+    imageUrl?: string | null;
+    warehouseStocks?: unknown;
+    warehouseExcessStocks?: unknown;
+    pendingCustomerOrdersByWarehouse?: unknown;
+    prices: unknown;
+    category: { id: string; name: string };
+  }>;
+  customer: any;
+  priceListRules: any[];
+  basePriceListPair: { invoiced: number; white: number };
+  includedWarehouses: string[];
+  effectiveVisibility: PriceVisibilityValue | null | undefined;
+  isDiscounted?: boolean;
+}) => {
+  const {
+    products,
+    customer,
+    priceListRules,
+    basePriceListPair,
+    includedWarehouses,
+    effectiveVisibility,
+    isDiscounted = false,
+  } = params;
+
+  if (products.length === 0) {
+    return [];
+  }
+
+  const productIds = products.map((product) => product.id);
+  const productCodes = products.map((product) => product.mikroCode);
+  const now = new Date();
+
+  const [agreementRows, priceStatsList] = await Promise.all([
+    prisma.customerPriceAgreement.findMany({
+      where: {
+        customerId: customer.id,
+        productId: { in: productIds },
+      },
+      select: {
+        productId: true,
+        priceInvoiced: true,
+        priceWhite: true,
+        customerProductCode: true,
+        minQuantity: true,
+        validFrom: true,
+        validTo: true,
+      },
+    }),
+    Promise.all(productCodes.map((code) => priceListService.getPriceStats(code))),
+  ]);
+
+  const agreementMap = new Map(agreementRows.map((row) => [row.productId, row]));
+
+  let lastSalesMap = new Map<string, number>();
+  if (customer.useLastPrices && customer.mikroCariCode && !isDiscounted) {
+    try {
+      const sales = await mikroService.getCustomerSalesMovements(
+        customer.mikroCariCode as string,
+        productCodes,
+        1
+      );
+      lastSalesMap = buildLastSalesMap(sales);
+    } catch (error) {
+      console.error('Customer last price failed', { customerId: customer.id, error });
+    }
+  }
+
+  return products.map((product, index) => {
+    const prices = product.prices as unknown as ProductPrices;
+    const customerPrices = pricingService.getPriceForCustomer(
+      prices,
+      customer.customerType as any
+    );
+
+    const priceStats = priceStatsList[index];
+    const productPriceListPair = resolveCustomerPriceListsForProduct(
+      basePriceListPair,
+      priceListRules,
+      {
+        brandCode: product.brandCode,
+        categoryId: product.category.id,
+      }
+    );
+    const listInvoiced = priceListService.getListPriceWithFallback(
+      priceStats,
+      productPriceListPair.invoiced
+    );
+    const listWhite = priceListService.getListPriceWithFallback(
+      priceStats,
+      productPriceListPair.white
+    );
+    const listPricesRaw =
+      listInvoiced > 0 || listWhite > 0 ? { invoiced: listInvoiced, white: listWhite } : undefined;
+    const listPricesBase = {
+      invoiced: listInvoiced > 0 ? listInvoiced : customerPrices.invoiced,
+      white: listWhite > 0 ? listWhite : customerPrices.white,
+    };
+    const guardPrices = getLastPriceGuardPrices(
+      priceStats,
+      customer.lastPriceGuardInvoicedListNo,
+      customer.lastPriceGuardWhiteListNo
+    );
+
+    let listPrices = listPricesBase;
+    if (customer.useLastPrices && customer.mikroCariCode && !isDiscounted) {
+      const lastSalePrice = lastSalesMap.get(product.mikroCode);
+      const lastPriceResult = resolveLastPriceOverride({
+        config: customer,
+        lastSalePrice,
+        listPrices: listPricesBase,
+        guardPrices,
+        product: {
+          currentCost: product.currentCost,
+          lastEntryPrice: product.lastEntryPrice,
+        },
+        priceVisibility: effectiveVisibility,
+      });
+      listPrices = lastPriceResult.prices;
+    }
+
+    const agreement = agreementMap.get(product.id);
+    const agreementActive = agreement ? isAgreementActive(agreement, now) : false;
+    const agreementBasePrices = isDiscounted ? customerPrices : listPrices;
+    const agreementPrices = agreementActive ? applyAgreementPrices(agreementBasePrices, agreement) : null;
+    const agreementExcessPrices = agreementActive ? applyAgreementPrices(customerPrices, agreement) : null;
+
+    const warehouseStocks = (product.warehouseStocks || {}) as Record<string, number>;
+    const pendingByWarehouse = (product.pendingCustomerOrdersByWarehouse || {}) as Record<string, number>;
+    const availableWarehouseStocks = applyPendingOrders(warehouseStocks, pendingByWarehouse);
+    const availableStock = sumStocks(availableWarehouseStocks, includedWarehouses);
+    const warehouseExcessStocks = (product as any).warehouseExcessStocks as Record<string, number>;
+
+    return {
+      id: product.id,
+      name: product.name,
+      mikroCode: product.mikroCode,
+      unit: product.unit,
+      unit2: product.unit2 || null,
+      unit2Factor: product.unit2Factor ?? null,
+      vatRate: product.vatRate ?? 0,
+      excessStock: product.excessStock,
+      availableStock,
+      maxOrderQuantity: isDiscounted ? product.excessStock : availableStock,
+      warehouseStocks: availableWarehouseStocks,
+      warehouseExcessStocks,
+      imageUrl: product.imageUrl,
+      category: product.category,
+      prices: agreementPrices || (isDiscounted ? customerPrices : listPrices),
+      excessPrices: agreementExcessPrices || customerPrices,
+      listPrices: agreementActive ? listPricesRaw : (isDiscounted ? listPricesRaw : undefined),
+      pricingMode: isDiscounted ? 'EXCESS' : 'LIST',
+      agreement: agreementActive
+        ? {
+            priceInvoiced: agreement!.priceInvoiced,
+            priceWhite: agreement!.priceWhite,
+            customerProductCode: agreement!.customerProductCode || null,
+            minQuantity: agreement!.minQuantity,
+            validFrom: agreement!.validFrom,
+            validTo: agreement!.validTo,
+          }
+        : undefined,
+    };
+  });
 };
 
 export class CustomerController {
@@ -82,6 +351,45 @@ export class CustomerController {
       const { categoryId, search, warehouse, mode } = req.query;
       const isDiscounted = mode === 'discounted' || mode === 'excess';
       const isPurchased = mode === 'purchased';
+      const isAgreementMode = mode === 'agreements';
+      const searchTokens = splitSearchTokens(search as string | undefined);
+      const rawLimit = Number(req.query.limit);
+      const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(Math.floor(rawLimit), 200) : undefined;
+      const rawOffset = Number(req.query.offset);
+      const offset = Number.isFinite(rawOffset) && rawOffset > 0 ? Math.floor(rawOffset) : 0;
+      const modeLabel = typeof mode === 'string' ? mode : 'all';
+      const shouldLogTiming = isAgreementMode || isPurchased;
+      const debugTiming =
+        (process.env.PRODUCTS_TIMING_LOG === '1' && shouldLogTiming) || req.query.debug === 'timing';
+      const start = debugTiming ? process.hrtime.bigint() : 0n;
+      let last = start;
+      const timings: Record<string, number> = {};
+      const lap = (label: string) => {
+        if (!debugTiming) return;
+        const now = process.hrtime.bigint();
+        timings[label] = Number(now - last) / 1e6;
+        last = now;
+      };
+      const logTiming = (extra: Record<string, unknown> = {}) => {
+        if (!debugTiming) return;
+        const totalMs = Number(process.hrtime.bigint() - start) / 1e6;
+        console.log(
+          '[products-timing]',
+          JSON.stringify({
+            mode: modeLabel,
+            totalMs,
+            steps: timings,
+            params: {
+              limit,
+              offset,
+              categoryId: Boolean(categoryId),
+              warehouse: Boolean(warehouse),
+              searchTokens: searchTokens.length,
+            },
+            ...extra,
+          })
+        );
+      };
 
       // Kullanıcı bilgisini al
       const user = await prisma.user.findUnique({
@@ -92,39 +400,317 @@ export class CustomerController {
           mikroCariCode: true,
           invoicedPriceListNo: true,
           whitePriceListNo: true,
+          priceVisibility: true,
+          useLastPrices: true,
+          lastPriceGuardType: true,
+          lastPriceGuardInvoicedListNo: true,
+          lastPriceGuardWhiteListNo: true,
+          lastPriceCostBasis: true,
+          lastPriceMinCostPercent: true,
+          parentCustomerId: true,
+          parentCustomer: {
+            select: {
+              id: true,
+              customerType: true,
+              mikroCariCode: true,
+              invoicedPriceListNo: true,
+              whitePriceListNo: true,
+              priceVisibility: true,
+              useLastPrices: true,
+              lastPriceGuardType: true,
+              lastPriceGuardInvoicedListNo: true,
+              lastPriceGuardWhiteListNo: true,
+              lastPriceCostBasis: true,
+              lastPriceMinCostPercent: true,
+            },
+          },
         },
       });
+      lap('user');
 
-      if (!user || !user.customerType) {
+      const customer = user?.parentCustomer || user;
+
+      if (!customer || !customer.customerType) {
         return res.status(400).json({ error: 'User has no customer type' });
       }
 
-      if (isPurchased && !user.mikroCariCode) {
+      const excludedProductCodes = await exclusionService.getActiveProductCodeExclusions();
+      const excludedProductCodeSet = new Set(excludedProductCodes);
+      lap('exclusions');
+
+      if (isPurchased && !customer.mikroCariCode) {
         return res.status(400).json({ error: 'User has no Mikro cari code' });
       }
 
       let purchasedCodes: string[] = [];
       if (isPurchased) {
-        purchasedCodes = await mikroService.getPurchasedProductCodes(user.mikroCariCode as string);
+        const localPurchasedRows = await prisma.orderItem.findMany({
+          where: { order: { userId: customer.id } },
+          select: { mikroCode: true },
+          distinct: ['mikroCode'],
+          take: 5000,
+        });
+        purchasedCodes = localPurchasedRows
+          .map((row) => String(row.mikroCode || '').trim())
+          .filter(Boolean)
+          .filter((code) => !excludedProductCodeSet.has(normalizeMikroCode(code)));
+
+        if (purchasedCodes.length === 0 && customer.mikroCariCode) {
+          try {
+            const allPurchasedCodes = await withTimeout(
+              mikroService.getPurchasedProductCodes(customer.mikroCariCode as string),
+              10000,
+              'getPurchasedProductCodes'
+            );
+            purchasedCodes = allPurchasedCodes.filter(
+              (code) => !excludedProductCodeSet.has(normalizeMikroCode(code))
+            );
+          } catch (error) {
+            console.error('Purchased codes fetch failed', { customerId: customer.id, error });
+          }
+        }
+
+        lap('purchasedCodes');
         if (purchasedCodes.length === 0) {
+          logTiming({ counts: { purchasedCodes: 0 }, reason: 'no-purchases' });
           return res.json({ products: [] });
         }
       }
 
-      const settings = await prisma.settings.findFirst({
-        select: {
-          includedWarehouses: true,
-          customerPriceLists: true,
-        },
-      });
+      const [settings, priceListRules] = await Promise.all([
+        prisma.settings.findFirst({
+          select: {
+            includedWarehouses: true,
+            customerPriceLists: true,
+          },
+        }),
+        prisma.customerPriceListRule.findMany({
+          where: { customerId: customer.id },
+        }),
+      ]);
+      lap('settings');
 
-      const priceListPair = resolveCustomerPriceLists(user, settings);
+      const basePriceListPair = resolveCustomerPriceLists(customer, settings);
       const includedWarehouses = settings?.includedWarehouses || [];
+      const effectiveVisibility = user?.parentCustomerId
+        ? (customer.priceVisibility === 'WHITE_ONLY' ? 'WHITE_ONLY' : 'INVOICED_ONLY')
+        : customer.priceVisibility;
+
+      const now = new Date();
+      let agreementRows: Array<{
+        id: string;
+        productId: string;
+        priceInvoiced: number;
+        priceWhite: number | null;
+        customerProductCode?: string | null;
+        minQuantity: number;
+        validFrom: Date;
+        validTo: Date | null;
+      }> = [];
+
+      if (isAgreementMode) {
+        const agreementWhere: any = {
+          customerId: customer.id,
+          validFrom: { lte: now },
+          OR: [{ validTo: null }, { validTo: { gte: now } }],
+          product: {
+            active: true,
+            ...(excludedProductCodes.length > 0 ? { mikroCode: { notIn: excludedProductCodes } } : {}),
+            ...(categoryId ? { categoryId: categoryId as string } : {}),
+          },
+        };
+
+        if (searchTokens.length > 0) {
+          agreementWhere.AND = searchTokens.map((token) => ({
+            OR: [
+              { customerProductCode: { contains: token, mode: 'insensitive' } },
+              { product: { name: { contains: token, mode: 'insensitive' } } },
+              { product: { mikroCode: { contains: token, mode: 'insensitive' } } },
+            ],
+          }));
+        }
+
+        const agreementRows = await prisma.customerPriceAgreement.findMany({
+          where: agreementWhere,
+          select: {
+            id: true,
+            productId: true,
+            priceInvoiced: true,
+            priceWhite: true,
+            customerProductCode: true,
+            minQuantity: true,
+            validFrom: true,
+            validTo: true,
+            product: {
+              select: {
+                id: true,
+                name: true,
+                mikroCode: true,
+                brandCode: true,
+                unit: true,
+                unit2: true,
+                unit2Factor: true,
+                vatRate: true,
+                currentCost: true,
+                lastEntryPrice: true,
+                excessStock: true,
+                imageUrl: true,
+                warehouseStocks: true,
+                warehouseExcessStocks: true,
+                pendingCustomerOrdersByWarehouse: true,
+                prices: true,
+                category: {
+                  select: {
+                    id: true,
+                    name: true,
+                  },
+                },
+              },
+            },
+          },
+          orderBy: {
+            product: { name: 'asc' },
+          },
+          ...(limit ? { skip: offset, take: limit } : {}),
+        });
+        lap('agreementsQuery');
+
+        if (agreementRows.length == 0) {
+          logTiming({ counts: { agreementRows: 0 } });
+          return res.json({ products: [] });
+        }
+
+        const agreementProducts = agreementRows.map((row) => row.product);
+        const priceStatsMap = await priceListService.getPriceStatsMap(
+          agreementProducts.map((product) => product.mikroCode)
+        );
+        lap('priceStats');
+
+        const shouldUseLastPrices =
+          Boolean(customer.useLastPrices && customer.mikroCariCode) && !isDiscounted;
+        let lastSalesMap = new Map<string, number>();
+        if (shouldUseLastPrices) {
+          try {
+            const sales = await mikroService.getCustomerSalesMovements(
+              customer.mikroCariCode as string,
+              agreementProducts.map((product) => product.mikroCode),
+              1
+            );
+            lastSalesMap = buildLastSalesMap(sales);
+          } catch (error) {
+            console.error('Customer last prices failed', { customerId: customer.id, error });
+          }
+        }
+
+        let productsWithPrices = agreementRows.map((row) => {
+          const product = row.product;
+          const prices = product.prices as unknown as ProductPrices;
+          const customerPrices = pricingService.getPriceForCustomer(
+            prices,
+            customer.customerType as any
+          );
+
+          const priceStats = priceStatsMap.get(product.mikroCode) || null;
+          const productPriceListPair = resolveCustomerPriceListsForProduct(
+            basePriceListPair,
+            priceListRules,
+            {
+              brandCode: product.brandCode,
+              categoryId: product.category.id,
+            }
+          );
+          const listInvoiced = priceListService.getListPriceWithFallback(
+            priceStats,
+            productPriceListPair.invoiced
+          );
+          const listWhite = priceListService.getListPriceWithFallback(
+            priceStats,
+            productPriceListPair.white
+          );
+          const listPricesRaw = {
+            invoiced: listInvoiced > 0 ? listInvoiced : customerPrices.invoiced,
+            white: listWhite > 0 ? listWhite : customerPrices.white,
+          };
+          const guardPrices = getLastPriceGuardPrices(
+            priceStats,
+            customer.lastPriceGuardInvoicedListNo,
+            customer.lastPriceGuardWhiteListNo
+          );
+          const lastSalePrice = lastSalesMap.get(product.mikroCode);
+          const lastPriceResult = resolveLastPriceOverride({
+            config: customer,
+            lastSalePrice,
+            listPrices: listPricesRaw,
+              guardPrices,
+            product: {
+              currentCost: product.currentCost,
+              lastEntryPrice: product.lastEntryPrice,
+            },
+            priceVisibility: effectiveVisibility,
+          });
+          const listPrices = lastPriceResult.prices;
+
+          const agreementActive = isAgreementActive(row, now);
+          const agreementPrices = agreementActive ? applyAgreementPrices(listPrices, row) : null;
+          const agreementExcessPrices = agreementActive ? applyAgreementPrices(customerPrices, row) : null;
+
+          const warehouseStocks = (product.warehouseStocks || {}) as Record<string, number>;
+          const warehouseExcessStocks = product.warehouseExcessStocks as Record<string, number>;
+          const pendingByWarehouse = product.pendingCustomerOrdersByWarehouse as Record<string, number> || {};
+          const availableWarehouseStocks = applyPendingOrders(warehouseStocks, pendingByWarehouse);
+          const availableStock = sumStocks(availableWarehouseStocks, includedWarehouses);
+
+          return {
+            id: product.id,
+            name: product.name,
+            mikroCode: product.mikroCode,
+            unit: product.unit,
+            unit2: product.unit2 || null,
+            unit2Factor: product.unit2Factor ?? null,
+            vatRate: product.vatRate ?? 0,
+            excessStock: product.excessStock,
+            availableStock,
+            maxOrderQuantity: availableStock,
+            imageUrl: product.imageUrl,
+            warehouseStocks: availableWarehouseStocks,
+            warehouseExcessStocks,
+            category: {
+              id: product.category.id,
+              name: product.category.name,
+            },
+            prices: agreementPrices || listPrices,
+            excessPrices: agreementExcessPrices || customerPrices,
+            listPrices: agreementActive ? listPrices : undefined,
+            pricingMode: 'LIST',
+            agreement: agreementActive
+              ? {
+                  priceInvoiced: row.priceInvoiced,
+                  priceWhite: row.priceWhite,
+                  customerProductCode: row.customerProductCode || null,
+                  minQuantity: row.minQuantity,
+                  validFrom: row.validFrom,
+                  validTo: row.validTo,
+                }
+              : undefined,
+          };
+        });
+
+        if (warehouse) {
+          productsWithPrices = productsWithPrices.filter((p) => p.maxOrderQuantity > 0);
+        }
+
+        lap('enrich');
+        logTiming({ counts: { agreementRows: agreementRows.length, products: productsWithPrices.length } });
+        return res.json({ products: productsWithPrices });
+      }
 
       const products = isDiscounted
         ? await stockService.getExcessStockProducts({
             categoryId: categoryId as string,
             search: search as string,
+            limit,
+            offset,
+            excludeProductCodes: excludedProductCodes,
           })
         : isPurchased
           ? await prisma.product.findMany({
@@ -132,83 +718,301 @@ export class CustomerController {
                 active: true,
                 mikroCode: { in: purchasedCodes },
                 ...(categoryId ? { categoryId: categoryId as string } : {}),
-                ...(search
+                ...(searchTokens.length > 0
                   ? {
-                      OR: [
-                        { name: { contains: search as string, mode: 'insensitive' } },
-                        { mikroCode: { contains: search as string, mode: 'insensitive' } },
-                      ],
+                      AND: searchTokens.map((token) => ({
+                        OR: [
+                          { name: { contains: token, mode: 'insensitive' } },
+                          { mikroCode: { contains: token, mode: 'insensitive' } },
+                        ],
+                      })),
                     }
                   : {}),
               },
-              include: {
+              select: {
+
+                id: true,
+
+                name: true,
+
+                mikroCode: true,
+
+                brandCode: true,
+
+                unit: true,
+
+                unit2: true,
+
+                unit2Factor: true,
+
+                vatRate: true,
+
+                currentCost: true,
+
+                lastEntryPrice: true,
+
+                excessStock: true,
+
+                imageUrl: true,
+
+                warehouseStocks: true,
+
+                warehouseExcessStocks: true,
+
+                pendingCustomerOrdersByWarehouse: true,
+
+                prices: true,
+
                 category: {
+
                   select: {
+
                     id: true,
+
                     name: true,
+
                   },
+
                 },
+
               },
               orderBy: {
                 name: 'asc',
               },
+              ...(limit ? { skip: offset, take: limit } : {}),
             })
           : await prisma.product.findMany({
               where: {
                 active: true,
+                ...(excludedProductCodes.length > 0 ? { mikroCode: { notIn: excludedProductCodes } } : {}),
                 ...(categoryId ? { categoryId: categoryId as string } : {}),
-                ...(search
+                ...(searchTokens.length > 0
                   ? {
-                      OR: [
-                        { name: { contains: search as string, mode: 'insensitive' } },
-                        { mikroCode: { contains: search as string, mode: 'insensitive' } },
-                      ],
+                      AND: searchTokens.map((token) => ({
+                        OR: [
+                          { name: { contains: token, mode: 'insensitive' } },
+                          { mikroCode: { contains: token, mode: 'insensitive' } },
+                        ],
+                      })),
                     }
                   : {}),
               },
-              include: {
+              select: {
+
+                id: true,
+
+                name: true,
+
+                mikroCode: true,
+
+                brandCode: true,
+
+                unit: true,
+
+                unit2: true,
+
+                unit2Factor: true,
+
+                vatRate: true,
+
+                currentCost: true,
+
+                lastEntryPrice: true,
+
+                excessStock: true,
+
+                imageUrl: true,
+
+                warehouseStocks: true,
+
+                warehouseExcessStocks: true,
+
+                pendingCustomerOrdersByWarehouse: true,
+
+                prices: true,
+
                 category: {
+
                   select: {
+
                     id: true,
+
                     name: true,
+
                   },
+
                 },
+
               },
               orderBy: {
                 name: 'asc',
               },
+              ...(limit ? { skip: offset, take: limit } : {}),
             });
+
+      lap('productsQuery');
 
       const priceStatsMap = await priceListService.getPriceStatsMap(
         products.map((product) => product.mikroCode)
       );
+      lap('priceStats');
+
+      const canFetchLastSalesForList =
+        Boolean(limit) || searchTokens.length > 0 || Boolean(categoryId);
+      const shouldUseLastPrices =
+        Boolean(customer.useLastPrices && customer.mikroCariCode) && !isDiscounted && canFetchLastSalesForList;
+      let lastSalesMap = new Map<string, number>();
+      let lastSalesDetailsMap = new Map<string, MikroCustomerSaleMovement[]>();
+      if (isPurchased) {
+        try {
+          const recentOrderItems = await prisma.orderItem.findMany({
+            where: {
+              mikroCode: { in: products.map((product) => product.mikroCode) },
+              order: { userId: customer.id },
+            },
+            orderBy: {
+              order: { createdAt: 'desc' },
+            },
+            take: Math.max(200, products.length * 5),
+            select: {
+              mikroCode: true,
+              quantity: true,
+              unitPrice: true,
+              totalPrice: true,
+              order: {
+                select: {
+                  createdAt: true,
+                  orderNumber: true,
+                  customerOrderNumber: true,
+                },
+              },
+            },
+          });
+
+          recentOrderItems.forEach((item) => {
+            const code = String(item.mikroCode || '').trim();
+            if (!code) return;
+            const existing = lastSalesDetailsMap.get(code) || [];
+            if (existing.length >= 5) return;
+            existing.push({
+              productCode: code,
+              saleDate: item.order.createdAt,
+              quantity: item.quantity,
+              unitPrice: item.unitPrice,
+              lineTotal: item.totalPrice,
+              vatAmount: 0,
+              vatRate: 0,
+              vatZeroed: false,
+              orderNumber: item.order.orderNumber || null,
+              documentNo: item.order.customerOrderNumber || item.order.orderNumber || null,
+            });
+            lastSalesDetailsMap.set(code, existing);
+          });
+        } catch (error) {
+          console.error('Purchased last sales fallback failed', { customerId: customer.id, error });
+        }
+      } else if (shouldUseLastPrices && customer.mikroCariCode) {
+        try {
+          const sales = await withTimeout(
+            mikroService.getCustomerSalesMovements(
+              customer.mikroCariCode as string,
+              products.map((product) => product.mikroCode),
+              1
+            ),
+            12000,
+            'getCustomerSalesMovements'
+          );
+          lastSalesMap = buildLastSalesMap(sales);
+        } catch (error) {
+          console.error('Customer last prices failed', { customerId: customer.id, error });
+        }
+      }
+
+        agreementRows = await prisma.customerPriceAgreement.findMany({
+        where: {
+          customerId: customer.id,
+          productId: { in: products.map((product) => product.id) },
+        },
+        select: {
+          id: true,
+          productId: true,
+          priceInvoiced: true,
+          priceWhite: true,
+          customerProductCode: true,
+          minQuantity: true,
+          validFrom: true,
+          validTo: true,
+        },
+      });
+      lap('agreementsQuery');
+      const agreementMap = new Map(agreementRows.map((row) => [row.productId, row]));
 
       let productsWithPrices = products.map((product) => {
         const prices = product.prices as unknown as ProductPrices;
         const customerPrices = pricingService.getPriceForCustomer(
           prices,
-          user.customerType as any
+          customer.customerType as any
         );
 
         const priceStats = priceStatsMap.get(product.mikroCode) || null;
-        const listInvoiced = priceListService.getListPrice(priceStats, priceListPair.invoiced);
-        const listWhite = priceListService.getListPrice(priceStats, priceListPair.white);
-        const listPrices = {
+        const productPriceListPair = resolveCustomerPriceListsForProduct(
+          basePriceListPair,
+          priceListRules,
+          {
+            brandCode: product.brandCode,
+            categoryId: product.category.id,
+          }
+        );
+        const listInvoiced = priceListService.getListPriceWithFallback(
+          priceStats,
+          productPriceListPair.invoiced
+        );
+        const listWhite = priceListService.getListPriceWithFallback(
+          priceStats,
+          productPriceListPair.white
+        );
+        const listPricesRaw =
+          listInvoiced > 0 || listWhite > 0 ? { invoiced: listInvoiced, white: listWhite } : undefined;
+        const listPricesBase = {
           invoiced: listInvoiced > 0 ? listInvoiced : customerPrices.invoiced,
           white: listWhite > 0 ? listWhite : customerPrices.white,
         };
-        const listPricesRaw =
-          listInvoiced > 0 || listWhite > 0 ? { invoiced: listInvoiced, white: listWhite } : undefined;
+        const guardPrices = getLastPriceGuardPrices(
+          priceStats,
+          customer.lastPriceGuardInvoicedListNo,
+          customer.lastPriceGuardWhiteListNo
+        );
+        const lastSalePrice = lastSalesMap.get(product.mikroCode);
+        const lastPriceResult = resolveLastPriceOverride({
+          config: customer,
+          lastSalePrice,
+          listPrices: listPricesBase,
+              guardPrices,
+          product: {
+            currentCost: product.currentCost,
+            lastEntryPrice: product.lastEntryPrice,
+          },
+          priceVisibility: effectiveVisibility,
+        });
+        const listPrices = lastPriceResult.prices;
+
+        const agreement = agreementMap.get(product.id);
+        const agreementActive = agreement ? isAgreementActive(agreement, now) : false;
+        const agreementBasePrices = isDiscounted ? customerPrices : listPrices;
+        const agreementPrices = agreementActive ? applyAgreementPrices(agreementBasePrices, agreement) : null;
+        const agreementExcessPrices = agreementActive ? applyAgreementPrices(customerPrices, agreement) : null;
 
         const warehouseStocks = (product.warehouseStocks || {}) as Record<string, number>;
         const warehouseExcessStocks = (product as any).warehouseExcessStocks as Record<string, number>;
-        let availableStock = sumStocks(warehouseStocks, includedWarehouses);
+        const pendingByWarehouse = (product as any).pendingCustomerOrdersByWarehouse as Record<string, number> || {};
+        const availableWarehouseStocks = applyPendingOrders(warehouseStocks, pendingByWarehouse);
+        let availableStock = sumStocks(availableWarehouseStocks, includedWarehouses);
         let excessStock = product.excessStock;
         let maxOrderQuantity = isDiscounted ? excessStock : availableStock;
 
         if (warehouse) {
           const warehouseKey = warehouse as string;
-          const warehouseQty = warehouseStocks?.[warehouseKey] || 0;
+          const warehouseQty = availableWarehouseStocks?.[warehouseKey] || 0;
           const warehouseExcessQty = warehouseExcessStocks?.[warehouseKey] || 0;
           if (isDiscounted) {
             excessStock = warehouseExcessQty;
@@ -224,20 +1028,49 @@ export class CustomerController {
           name: product.name,
           mikroCode: product.mikroCode,
           unit: product.unit,
+          unit2: product.unit2 || null,
+          unit2Factor: product.unit2Factor ?? null,
+          vatRate: product.vatRate ?? 0,
           excessStock,
           availableStock,
           maxOrderQuantity,
           imageUrl: product.imageUrl,
-          warehouseStocks,
+          warehouseStocks: availableWarehouseStocks,
           warehouseExcessStocks,
           category: {
             id: product.category.id,
             name: product.category.name,
           },
-          prices: isDiscounted ? customerPrices : listPrices,
-          excessPrices: customerPrices,
-          listPrices: isDiscounted ? listPricesRaw : undefined,
+          prices: agreementPrices || (isDiscounted ? customerPrices : listPrices),
+          excessPrices: agreementExcessPrices || customerPrices,
+          listPrices: agreementActive ? listPricesRaw : (isDiscounted ? listPricesRaw : undefined),
           pricingMode: isDiscounted ? 'EXCESS' : 'LIST',
+          lastSales: isPurchased
+            ? (() => {
+                const lastSales = lastSalesDetailsMap.get(product.mikroCode) || [];
+                return lastSales.map((lastSale) => ({
+                  saleDate: lastSale.saleDate,
+                  quantity: lastSale.quantity,
+                  unitPrice: lastSale.unitPrice,
+                  lineTotal: lastSale.lineTotal,
+                  vatAmount: lastSale.vatAmount,
+                  vatRate: lastSale.vatRate,
+                  vatZeroed: lastSale.vatZeroed,
+                  orderNumber: lastSale.orderNumber || null,
+                  documentNo: lastSale.documentNo || null,
+                }));
+              })()
+            : undefined,
+          agreement: agreementActive
+            ? {
+                priceInvoiced: agreement!.priceInvoiced,
+                priceWhite: agreement!.priceWhite,
+                customerProductCode: agreement!.customerProductCode || null,
+                minQuantity: agreement!.minQuantity,
+                validFrom: agreement!.validFrom,
+                validTo: agreement!.validTo,
+              }
+            : undefined,
         };
       });
 
@@ -245,6 +1078,8 @@ export class CustomerController {
         productsWithPrices = productsWithPrices.filter((p) => p.maxOrderQuantity > 0);
       }
 
+      lap('enrich');
+      logTiming({ counts: { products: products.length, agreements: agreementRows.length, purchasedCodes: purchasedCodes.length } });
       res.json({ products: productsWithPrices });
     } catch (error) {
       next(error);
@@ -264,39 +1099,120 @@ export class CustomerController {
         where: { id: req.user!.userId },
         select: {
           id: true,
+          mikroCariCode: true,
           customerType: true,
           invoicedPriceListNo: true,
           whitePriceListNo: true,
-        },
-      });
-
-      if (!user || !user.customerType) {
-        return res.status(400).json({ error: 'User has no customer type' });
-      }
-
-      const settings = await prisma.settings.findFirst({
-        select: {
-          includedWarehouses: true,
-          customerPriceLists: true,
-        },
-      });
-
-      const priceListPair = resolveCustomerPriceLists(user, settings);
-      const includedWarehouses = settings?.includedWarehouses || [];
-
-      const product = await prisma.product.findUnique({
-        where: { id },
-        include: {
-          category: {
+          priceVisibility: true,
+          useLastPrices: true,
+          lastPriceGuardType: true,
+          lastPriceGuardInvoicedListNo: true,
+          lastPriceGuardWhiteListNo: true,
+          lastPriceCostBasis: true,
+          lastPriceMinCostPercent: true,
+          parentCustomerId: true,
+          parentCustomer: {
             select: {
               id: true,
-              name: true,
+              mikroCariCode: true,
+              customerType: true,
+              invoicedPriceListNo: true,
+              whitePriceListNo: true,
+              priceVisibility: true,
+              useLastPrices: true,
+              lastPriceGuardType: true,
+              lastPriceGuardInvoicedListNo: true,
+              lastPriceGuardWhiteListNo: true,
+              lastPriceCostBasis: true,
+              lastPriceMinCostPercent: true,
             },
           },
         },
       });
 
+      const customer = user?.parentCustomer || user;
+
+      if (!customer || !customer.customerType) {
+        return res.status(400).json({ error: 'User has no customer type' });
+      }
+
+      const excludedProductCodeSet = new Set(await exclusionService.getActiveProductCodeExclusions());
+
+      const [settings, priceListRules] = await Promise.all([
+        prisma.settings.findFirst({
+          select: {
+            includedWarehouses: true,
+            customerPriceLists: true,
+          },
+        }),
+        prisma.customerPriceListRule.findMany({
+          where: { customerId: customer.id },
+        }),
+      ]);
+
+      const basePriceListPair = resolveCustomerPriceLists(customer, settings);
+      const includedWarehouses = settings?.includedWarehouses || [];
+      const effectiveVisibility = user?.parentCustomerId
+        ? (customer.priceVisibility === 'WHITE_ONLY' ? 'WHITE_ONLY' : 'INVOICED_ONLY')
+        : customer.priceVisibility;
+
+      const product = await prisma.product.findUnique({
+        where: { id },
+        select: {
+
+          id: true,
+
+          name: true,
+
+          mikroCode: true,
+
+          brandCode: true,
+
+          unit: true,
+
+          unit2: true,
+
+          unit2Factor: true,
+
+          vatRate: true,
+
+          currentCost: true,
+
+          lastEntryPrice: true,
+
+          excessStock: true,
+
+          imageUrl: true,
+
+          warehouseStocks: true,
+
+          warehouseExcessStocks: true,
+
+          pendingCustomerOrdersByWarehouse: true,
+
+          prices: true,
+          active: true,
+
+          category: {
+
+            select: {
+
+              id: true,
+
+              name: true,
+
+            },
+
+          },
+
+        },
+      });
+
       if (!product || !product.active) {
+        return res.status(404).json({ error: 'Product not found' });
+      }
+
+      if (excludedProductCodeSet.has(normalizeMikroCode(product.mikroCode))) {
         return res.status(404).json({ error: 'Product not found' });
       }
 
@@ -307,40 +1223,339 @@ export class CustomerController {
       const prices = product.prices as unknown as ProductPrices;
       const customerPrices = pricingService.getPriceForCustomer(
         prices,
-        user.customerType as any
+        customer.customerType as any
       );
 
       const priceStats = await priceListService.getPriceStats(product.mikroCode);
-      const listInvoiced = priceListService.getListPrice(priceStats, priceListPair.invoiced);
-      const listWhite = priceListService.getListPrice(priceStats, priceListPair.white);
-      const listPrices = {
+      const productPriceListPair = resolveCustomerPriceListsForProduct(
+        basePriceListPair,
+        priceListRules,
+        {
+          brandCode: product.brandCode,
+          categoryId: product.category.id,
+        }
+      );
+      const listInvoiced = priceListService.getListPriceWithFallback(
+        priceStats,
+        productPriceListPair.invoiced
+      );
+      const listWhite = priceListService.getListPriceWithFallback(
+        priceStats,
+        productPriceListPair.white
+      );
+      const listPricesRaw =
+        listInvoiced > 0 || listWhite > 0 ? { invoiced: listInvoiced, white: listWhite } : undefined;
+      const listPricesBase = {
         invoiced: listInvoiced > 0 ? listInvoiced : customerPrices.invoiced,
         white: listWhite > 0 ? listWhite : customerPrices.white,
       };
-      const listPricesRaw =
-        listInvoiced > 0 || listWhite > 0 ? { invoiced: listInvoiced, white: listWhite } : undefined;
+      const guardPrices = getLastPriceGuardPrices(
+        priceStats,
+        customer.lastPriceGuardInvoicedListNo,
+        customer.lastPriceGuardWhiteListNo
+      );
+      let listPrices = listPricesBase;
+      if (customer.useLastPrices && customer.mikroCariCode && !isDiscounted) {
+        try {
+          const sales = await mikroService.getCustomerSalesMovements(
+            customer.mikroCariCode as string,
+            [product.mikroCode],
+            1
+          );
+          const lastSalesMap = buildLastSalesMap(sales);
+          const lastSalePrice = lastSalesMap.get(product.mikroCode);
+          const lastPriceResult = resolveLastPriceOverride({
+            config: customer,
+            lastSalePrice,
+            listPrices: listPricesBase,
+              guardPrices,
+            product: {
+              currentCost: product.currentCost,
+              lastEntryPrice: product.lastEntryPrice,
+            },
+            priceVisibility: effectiveVisibility,
+          });
+          listPrices = lastPriceResult.prices;
+        } catch (error) {
+          console.error('Customer last price failed', { customerId: customer.id, error });
+        }
+      }
 
       const warehouseStocks = (product.warehouseStocks || {}) as Record<string, number>;
       const warehouseExcessStocks = (product as any).warehouseExcessStocks as Record<string, number>;
-      const availableStock = sumStocks(warehouseStocks, includedWarehouses);
+      const pendingByWarehouse = (product as any).pendingCustomerOrdersByWarehouse as Record<string, number> || {};
+      const availableWarehouseStocks = applyPendingOrders(warehouseStocks, pendingByWarehouse);
+      const availableStock = sumStocks(availableWarehouseStocks, includedWarehouses);
+
+      const agreement = await prisma.customerPriceAgreement.findFirst({
+        where: {
+          customerId: customer.id,
+          productId: product.id,
+        },
+        select: {
+          priceInvoiced: true,
+          priceWhite: true,
+          customerProductCode: true,
+          minQuantity: true,
+          validFrom: true,
+          validTo: true,
+        },
+      });
+      const now = new Date();
+      const agreementActive = agreement ? isAgreementActive(agreement, now) : false;
+      const agreementBasePrices = isDiscounted ? customerPrices : listPrices;
+      const agreementPrices = agreementActive ? applyAgreementPrices(agreementBasePrices, agreement) : null;
+      const agreementExcessPrices = agreementActive ? applyAgreementPrices(customerPrices, agreement) : null;
 
       res.json({
         id: product.id,
         name: product.name,
         mikroCode: product.mikroCode,
         unit: product.unit,
+        unit2: product.unit2 || null,
+        unit2Factor: product.unit2Factor ?? null,
+        vatRate: product.vatRate ?? 0,
         excessStock: product.excessStock,
         availableStock,
         maxOrderQuantity: isDiscounted ? product.excessStock : availableStock,
-        warehouseStocks,
+        warehouseStocks: availableWarehouseStocks,
         warehouseExcessStocks,
         imageUrl: product.imageUrl,
         category: product.category,
-        prices: isDiscounted ? customerPrices : listPrices,
-        excessPrices: customerPrices,
-        listPrices: isDiscounted ? listPricesRaw : undefined,
+        prices: agreementPrices || (isDiscounted ? customerPrices : listPrices),
+        excessPrices: agreementExcessPrices || customerPrices,
+        listPrices: agreementActive ? listPricesRaw : (isDiscounted ? listPricesRaw : undefined),
         pricingMode: isDiscounted ? 'EXCESS' : 'LIST',
+        agreement: agreementActive
+          ? {
+              priceInvoiced: agreement!.priceInvoiced,
+              priceWhite: agreement!.priceWhite,
+              customerProductCode: agreement!.customerProductCode || null,
+              minQuantity: agreement!.minQuantity,
+              validFrom: agreement!.validFrom,
+              validTo: agreement!.validTo,
+            }
+          : undefined,
       });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * GET /api/products/:id/recommendations
+   */
+  async getProductRecommendations(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { id } = req.params;
+      const context = await loadCustomerContext(req.user!.userId);
+      const recommendedIds = await productComplementService.getRecommendationIdsForProduct(id);
+
+      if (recommendedIds.length === 0) {
+        return res.json({ products: [] });
+      }
+      const excludedProductCodes = await exclusionService.getActiveProductCodeExclusions();
+
+      const popularityMap = await productComplementService.getPopularityByProductIds(recommendedIds);
+      const orderIndex = new Map(recommendedIds.map((productId, index) => [productId, index]));
+      const sortedIds = [...recommendedIds].sort((a, b) => {
+        const aCount = popularityMap.get(a) || 0;
+        const bCount = popularityMap.get(b) || 0;
+        if (bCount !== aCount) {
+          return bCount - aCount;
+        }
+        return (orderIndex.get(a) || 0) - (orderIndex.get(b) || 0);
+      });
+
+      const products = await prisma.product.findMany({
+        where: {
+          id: { in: sortedIds },
+          active: true,
+          ...(excludedProductCodes.length > 0 ? { mikroCode: { notIn: excludedProductCodes } } : {}),
+        },
+        select: {
+          id: true,
+          name: true,
+          mikroCode: true,
+          brandCode: true,
+          unit: true,
+          unit2: true,
+          unit2Factor: true,
+          vatRate: true,
+          currentCost: true,
+          lastEntryPrice: true,
+          excessStock: true,
+          imageUrl: true,
+          warehouseStocks: true,
+          warehouseExcessStocks: true,
+          pendingCustomerOrdersByWarehouse: true,
+          prices: true,
+          category: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+        },
+      });
+
+      const productMap = new Map(products.map((product) => [product.id, product]));
+      const orderedProducts = sortedIds
+        .map((productId) => productMap.get(productId))
+        .filter(Boolean) as typeof products;
+
+      const payload = await buildCustomerProductPayloads({
+        products: orderedProducts,
+        customer: context.customer,
+        priceListRules: context.priceListRules,
+        basePriceListPair: context.basePriceListPair,
+        includedWarehouses: context.includedWarehouses,
+        effectiveVisibility: context.effectiveVisibility,
+        isDiscounted: false,
+      });
+
+      res.json({ products: payload });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * GET /api/recommendations/cart
+   */
+  async getCartRecommendations(req: Request, res: Response, next: NextFunction) {
+    try {
+      const context = await loadCustomerContext(req.user!.userId);
+      const cart = await prisma.cart.findUnique({
+        where: { userId: req.user!.userId },
+        select: {
+          items: {
+            select: { productId: true },
+          },
+        },
+      });
+      const cartProductIds: string[] = [];
+      const seen = new Set<string>();
+      (cart?.items || []).forEach((item) => {
+        if (!item.productId || seen.has(item.productId)) return;
+        seen.add(item.productId);
+        cartProductIds.push(item.productId);
+      });
+
+      if (cartProductIds.length === 0) {
+        return res.json({ groups: [] });
+      }
+      const excludedProductCodes = await exclusionService.getActiveProductCodeExclusions();
+
+      const baseProducts = await prisma.product.findMany({
+        where: {
+          id: { in: cartProductIds },
+          ...(excludedProductCodes.length > 0 ? { mikroCode: { notIn: excludedProductCodes } } : {}),
+        },
+        select: { id: true, name: true, mikroCode: true },
+      });
+      const baseProductMap = new Map(baseProducts.map((product) => [product.id, product]));
+      const visibleCartProductIds = baseProducts.map((product) => product.id);
+
+      if (visibleCartProductIds.length === 0) {
+        return res.json({ groups: [] });
+      }
+
+      const recommendationsByProduct = await productComplementService.getRecommendationIdsByProduct(
+        visibleCartProductIds,
+        5,
+        visibleCartProductIds
+      );
+
+      const allRecommendedIds = Array.from(
+        new Set(Object.values(recommendationsByProduct).flat())
+      );
+
+      if (allRecommendedIds.length === 0) {
+        return res.json({ groups: [] });
+      }
+
+      const popularityMap = await productComplementService.getPopularityByProductIds(allRecommendedIds);
+      const sortByPopularity = (ids: string[]) => {
+        const orderIndex = new Map(ids.map((id, index) => [id, index]));
+        return [...ids].sort((a, b) => {
+          const aCount = popularityMap.get(a) || 0;
+          const bCount = popularityMap.get(b) || 0;
+          if (bCount !== aCount) {
+            return bCount - aCount;
+          }
+          return (orderIndex.get(a) || 0) - (orderIndex.get(b) || 0);
+        });
+      };
+
+      const products = await prisma.product.findMany({
+        where: {
+          id: { in: allRecommendedIds },
+          active: true,
+          ...(excludedProductCodes.length > 0 ? { mikroCode: { notIn: excludedProductCodes } } : {}),
+        },
+        select: {
+          id: true,
+          name: true,
+          mikroCode: true,
+          brandCode: true,
+          unit: true,
+          unit2: true,
+          unit2Factor: true,
+          vatRate: true,
+          currentCost: true,
+          lastEntryPrice: true,
+          excessStock: true,
+          imageUrl: true,
+          warehouseStocks: true,
+          warehouseExcessStocks: true,
+          pendingCustomerOrdersByWarehouse: true,
+          prices: true,
+          category: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+        },
+      });
+
+      const productMap = new Map(products.map((product) => [product.id, product]));
+      const orderedProducts = allRecommendedIds
+        .map((productId) => productMap.get(productId))
+        .filter(Boolean) as typeof products;
+
+      const payload = await buildCustomerProductPayloads({
+        products: orderedProducts,
+        customer: context.customer,
+        priceListRules: context.priceListRules,
+        basePriceListPair: context.basePriceListPair,
+        includedWarehouses: context.includedWarehouses,
+        effectiveVisibility: context.effectiveVisibility,
+        isDiscounted: false,
+      });
+
+      const payloadMap = new Map(payload.map((product) => [product.id, product]));
+
+      const groups = visibleCartProductIds
+        .map((productId) => {
+          const baseProduct = baseProductMap.get(productId);
+          if (!baseProduct) return null;
+          const recommendedIds = sortByPopularity(recommendationsByProduct[productId] || []);
+          const recommendedProducts = recommendedIds
+            .map((id) => payloadMap.get(id))
+            .filter(Boolean);
+
+          if (recommendedProducts.length === 0) return null;
+
+          return {
+            baseProduct,
+            products: recommendedProducts,
+          };
+        })
+        .filter(Boolean);
+
+      res.json({ groups });
     } catch (error) {
       next(error);
     }
@@ -397,10 +1612,33 @@ export class CustomerController {
         return res.status(400).json({ error: 'Invalid VAT display preference' });
       }
 
-      await prisma.user.update({
+      const user = await prisma.user.findUnique({
         where: { id: req.user!.userId },
-        data: { vatDisplayPreference },
+        select: { id: true, parentCustomerId: true },
       });
+
+      if (!user) {
+        return res.status(404).json({ error: 'User not found' });
+      }
+
+      const targetId = user.parentCustomerId || user.id;
+      const updates = [
+        prisma.user.update({
+          where: { id: targetId },
+          data: { vatDisplayPreference },
+        }),
+      ];
+
+      if (targetId !== user.id) {
+        updates.push(
+          prisma.user.update({
+            where: { id: user.id },
+            data: { vatDisplayPreference },
+          })
+        );
+      }
+
+      await prisma.$transaction(updates);
 
       res.json({ message: 'Settings updated successfully' });
     } catch (error) {
@@ -413,10 +1651,14 @@ export class CustomerController {
    */
   async getCart(req: Request, res: Response, next: NextFunction) {
     try {
+      const excludedProductCodes = await exclusionService.getActiveProductCodeExclusions();
       const cart = await prisma.cart.findUnique({
         where: { userId: req.user!.userId },
         include: {
           items: {
+            ...(excludedProductCodes.length > 0
+              ? { where: { product: { mikroCode: { notIn: excludedProductCodes } } } }
+              : {}),
             include: {
               product: {
                 select: {
@@ -454,6 +1696,7 @@ export class CustomerController {
             priceType: item.priceType,
             unitPrice: item.unitPrice,
             totalPrice: item.quantity * item.unitPrice,
+            lineNote: item.lineNote || null,
             vatRate: product?.vatRate || 0,
           };
         })
@@ -495,22 +1738,57 @@ export class CustomerController {
         where: { id: req.user!.userId },
         select: {
           id: true,
+          mikroCariCode: true,
           customerType: true,
           invoicedPriceListNo: true,
           whitePriceListNo: true,
+          priceVisibility: true,
+          useLastPrices: true,
+          lastPriceGuardType: true,
+          lastPriceGuardInvoicedListNo: true,
+          lastPriceGuardWhiteListNo: true,
+          lastPriceCostBasis: true,
+          lastPriceMinCostPercent: true,
+          parentCustomerId: true,
+          parentCustomer: {
+            select: {
+              id: true,
+              mikroCariCode: true,
+              customerType: true,
+              invoicedPriceListNo: true,
+              whitePriceListNo: true,
+              priceVisibility: true,
+              useLastPrices: true,
+              lastPriceGuardType: true,
+              lastPriceGuardInvoicedListNo: true,
+              lastPriceGuardWhiteListNo: true,
+              lastPriceCostBasis: true,
+              lastPriceMinCostPercent: true,
+            },
+          },
         },
       });
 
-      if (!user || !user.customerType) {
-        return res.status(400).json({ error: 'User has no customer type' });
-      }
+        const customer = user?.parentCustomer || user;
 
-      // Ürün kontrolü
-      const product = await prisma.product.findUnique({
-        where: { id: productId },
-      });
+        if (!customer || !customer.customerType) {
+          return res.status(400).json({ error: 'User has no customer type' });
+        }
+        const effectiveVisibility = user?.parentCustomerId
+          ? (customer.priceVisibility === 'WHITE_ONLY' ? 'WHITE_ONLY' : 'INVOICED_ONLY')
+          : customer.priceVisibility;
+
+        // Ürün kontrolü
+        const product = await prisma.product.findUnique({
+          where: { id: productId },
+        });
 
       if (!product) {
+        return res.status(404).json({ error: 'Product not found' });
+      }
+
+      const excludedProductCodeSet = new Set(await exclusionService.getActiveProductCodeExclusions());
+      if (excludedProductCodeSet.has(normalizeMikroCode(product.mikroCode))) {
         return res.status(404).json({ error: 'Product not found' });
       }
 
@@ -518,21 +1796,14 @@ export class CustomerController {
         return res.status(400).json({ error: 'Product is not discounted' });
       }
 
-      // Real-time stock check from Mikro ERP
-      const stockCheck = await stockService.checkRealtimeStock(productId, quantity);
-
-      if (!stockCheck.available) {
-        return res.status(400).json({
-          error: 'Yetersiz stok',
-          message: `Stok yetersiz. Mevcut: ${stockCheck.currentStock} ${product.unit}`,
-          available: stockCheck.currentStock,
-        });
+      if (!isPriceTypeAllowed(effectiveVisibility, priceType)) {
+        return res.status(400).json({ error: 'Price type not allowed for customer' });
       }
 
       const prices = product.prices as unknown as ProductPrices;
       const customerPrices = pricingService.getPriceForCustomer(
         prices,
-        user.customerType as any
+        customer.customerType as any
       );
 
       let unitPrice = 0;
@@ -540,22 +1811,91 @@ export class CustomerController {
       if (effectivePriceMode === 'EXCESS') {
         unitPrice = priceType === 'INVOICED' ? customerPrices.invoiced : customerPrices.white;
       } else {
-        const settings = await prisma.settings.findFirst({
-          select: {
-            customerPriceLists: true,
-          },
-        });
-        const priceListPair = resolveCustomerPriceLists(user, settings);
+        const [settings, priceListRules] = await Promise.all([
+          prisma.settings.findFirst({
+            select: {
+              customerPriceLists: true,
+            },
+          }),
+          prisma.customerPriceListRule.findMany({
+            where: { customerId: customer.id },
+          }),
+        ]);
+        const basePriceListPair = resolveCustomerPriceLists(customer, settings);
+        const productPriceListPair = resolveCustomerPriceListsForProduct(
+          basePriceListPair,
+          priceListRules,
+          {
+            brandCode: product.brandCode,
+            categoryId: product.categoryId,
+          }
+        );
         const priceStats = await priceListService.getPriceStats(product.mikroCode);
-        const listInvoiced = priceListService.getListPrice(priceStats, priceListPair.invoiced);
-        const listWhite = priceListService.getListPrice(priceStats, priceListPair.white);
+        const listInvoiced = priceListService.getListPriceWithFallback(
+          priceStats,
+          productPriceListPair.invoiced
+        );
+        const listWhite = priceListService.getListPriceWithFallback(
+          priceStats,
+          productPriceListPair.white
+        );
 
-        const listPrices = {
+        const listPricesBase = {
           invoiced: listInvoiced > 0 ? listInvoiced : customerPrices.invoiced,
           white: listWhite > 0 ? listWhite : customerPrices.white,
         };
+        const guardPrices = getLastPriceGuardPrices(
+          priceStats,
+          customer.lastPriceGuardInvoicedListNo,
+          customer.lastPriceGuardWhiteListNo
+        );
+        let listPrices = listPricesBase;
+        if (customer.useLastPrices && customer.mikroCariCode) {
+          try {
+            const sales = await mikroService.getCustomerSalesMovements(
+              customer.mikroCariCode as string,
+              [product.mikroCode],
+              1
+            );
+            const lastSalesMap = buildLastSalesMap(sales);
+            const lastSalePrice = lastSalesMap.get(product.mikroCode);
+            const lastPriceResult = resolveLastPriceOverride({
+              config: customer,
+              lastSalePrice,
+              listPrices: listPricesBase,
+              guardPrices,
+              product: {
+                currentCost: product.currentCost,
+                lastEntryPrice: product.lastEntryPrice,
+              },
+              priceVisibility: effectiveVisibility,
+            });
+            listPrices = lastPriceResult.prices;
+          } catch (error) {
+            console.error('Customer last price failed', { customerId: customer.id, error });
+          }
+        }
 
         unitPrice = priceType === 'INVOICED' ? listPrices.invoiced : listPrices.white;
+      }
+
+      const agreement = await prisma.customerPriceAgreement.findFirst({
+        where: {
+          customerId: customer.id,
+          productId,
+        },
+        select: {
+          priceInvoiced: true,
+          priceWhite: true,
+          customerProductCode: true,
+          minQuantity: true,
+          validFrom: true,
+          validTo: true,
+        },
+      });
+
+      if (agreement && isAgreementApplicable(agreement, new Date(), quantity)) {
+        unitPrice = resolveAgreementPrice(agreement, priceType, unitPrice);
       }
 
       // Cart'ı bul veya oluştur
@@ -575,26 +1915,56 @@ export class CustomerController {
           cartId: cart.id,
           productId,
           priceType,
+          priceMode: effectivePriceMode,
         },
       });
 
+      let cartItemId: string | undefined;
+
       if (existingItem) {
+        const combinedQuantity = existingItem.quantity + quantity;
+        if (agreement && isAgreementApplicable(agreement, new Date(), combinedQuantity)) {
+          unitPrice = resolveAgreementPrice(agreement, priceType, unitPrice);
+        }
         await prisma.cartItem.update({
           where: { id: existingItem.id },
           data: {
-            quantity: existingItem.quantity + quantity,
+            quantity: combinedQuantity,
+            unitPrice,
           },
         });
+        cartItemId = existingItem.id;
       } else {
-        await prisma.cartItem.create({
+        const createdItem = await prisma.cartItem.create({
           data: {
             cartId: cart.id,
             productId,
             quantity,
             priceType,
+            priceMode: effectivePriceMode,
             unitPrice,
           },
         });
+        cartItemId = createdItem.id;
+      }
+
+      const sessionId = typeof req.headers['x-session-id'] === 'string' ? req.headers['x-session-id'] : undefined;
+      try {
+        await customerActivityService.trackEvent({
+          type: 'CART_ADD',
+          userId: user.id,
+          customerId: customer?.id ?? user.id,
+          sessionId,
+          productId: product.id,
+          productCode: product.mikroCode,
+          cartItemId,
+          quantity,
+          meta: { priceType, priceMode: effectivePriceMode },
+          ip: req.ip,
+          userAgent: req.headers['user-agent'],
+        });
+      } catch (error) {
+        console.error('Customer activity log failed (cart add):', error);
       }
 
       res.json({ message: 'Product added to cart' });
@@ -609,16 +1979,211 @@ export class CustomerController {
   async updateCartItem(req: Request, res: Response, next: NextFunction) {
     try {
       const { itemId } = req.params;
-      const { quantity } = req.body;
+      const { quantity, lineNote } = req.body || {};
 
-      if (quantity <= 0) {
+      const hasQuantity = quantity !== undefined && quantity !== null;
+      const parsedQuantity = Number(quantity);
+
+      if (hasQuantity && (!Number.isFinite(parsedQuantity) || parsedQuantity <= 0)) {
         return res.status(400).json({ error: 'Quantity must be greater than 0' });
+      }
+
+      const cartItem = await prisma.cartItem.findUnique({
+        where: { id: itemId },
+        include: {
+          product: true,
+          cart: {
+            include: {
+              user: {
+                select: {
+                  id: true,
+                  mikroCariCode: true,
+                  customerType: true,
+                  invoicedPriceListNo: true,
+                  whitePriceListNo: true,
+                  priceVisibility: true,
+                  useLastPrices: true,
+                  lastPriceGuardType: true,
+                  lastPriceGuardInvoicedListNo: true,
+                  lastPriceGuardWhiteListNo: true,
+                  lastPriceCostBasis: true,
+                  lastPriceMinCostPercent: true,
+                  parentCustomerId: true,
+                  parentCustomer: {
+                    select: {
+                      id: true,
+                      mikroCariCode: true,
+                      customerType: true,
+                      invoicedPriceListNo: true,
+                      whitePriceListNo: true,
+                      priceVisibility: true,
+                      useLastPrices: true,
+                      lastPriceGuardType: true,
+                      lastPriceGuardInvoicedListNo: true,
+                      lastPriceGuardWhiteListNo: true,
+                      lastPriceCostBasis: true,
+                      lastPriceMinCostPercent: true,
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      });
+
+      if (!cartItem) {
+        return res.status(404).json({ error: 'Cart item not found' });
+      }
+
+      const nextQuantity = hasQuantity ? parsedQuantity : cartItem.quantity;
+
+      const user = cartItem.cart.user;
+      const customer = user?.parentCustomer || user;
+
+      if (!customer || !customer.customerType) {
+        return res.status(400).json({ error: 'User has no customer type' });
+      }
+      const effectiveVisibility = user?.parentCustomerId
+        ? (customer.priceVisibility === 'WHITE_ONLY' ? 'WHITE_ONLY' : 'INVOICED_ONLY')
+        : customer.priceVisibility;
+
+      const priceType = cartItem.priceType;
+      const prices = cartItem.product.prices as unknown as ProductPrices;
+      const customerPrices = pricingService.getPriceForCustomer(
+        prices,
+        customer.customerType as any
+      );
+
+      let unitPrice = 0;
+      const effectivePriceMode = cartItem.priceMode === 'EXCESS' ? 'EXCESS' : 'LIST';
+
+      if (effectivePriceMode === 'EXCESS') {
+        unitPrice = priceType === 'INVOICED' ? customerPrices.invoiced : customerPrices.white;
+      } else {
+        const [settings, priceListRules] = await Promise.all([
+          prisma.settings.findFirst({
+            select: {
+              customerPriceLists: true,
+            },
+          }),
+          prisma.customerPriceListRule.findMany({
+            where: { customerId: customer.id },
+          }),
+        ]);
+        const basePriceListPair = resolveCustomerPriceLists(customer, settings);
+        const productPriceListPair = resolveCustomerPriceListsForProduct(
+          basePriceListPair,
+          priceListRules,
+          {
+            brandCode: cartItem.product.brandCode,
+            categoryId: cartItem.product.categoryId,
+          }
+        );
+        const priceStats = await priceListService.getPriceStats(cartItem.product.mikroCode);
+        const listInvoiced = priceListService.getListPriceWithFallback(
+          priceStats,
+          productPriceListPair.invoiced
+        );
+        const listWhite = priceListService.getListPriceWithFallback(
+          priceStats,
+          productPriceListPair.white
+        );
+
+        const listPricesBase = {
+          invoiced: listInvoiced > 0 ? listInvoiced : customerPrices.invoiced,
+          white: listWhite > 0 ? listWhite : customerPrices.white,
+        };
+        const guardPrices = getLastPriceGuardPrices(
+          priceStats,
+          customer.lastPriceGuardInvoicedListNo,
+          customer.lastPriceGuardWhiteListNo
+        );
+        let listPrices = listPricesBase;
+        if (customer.useLastPrices && customer.mikroCariCode) {
+          try {
+            const sales = await mikroService.getCustomerSalesMovements(
+              customer.mikroCariCode as string,
+              [cartItem.product.mikroCode],
+              1
+            );
+            const lastSalesMap = buildLastSalesMap(sales);
+            const lastSalePrice = lastSalesMap.get(cartItem.product.mikroCode);
+            const lastPriceResult = resolveLastPriceOverride({
+              config: customer,
+              lastSalePrice,
+              listPrices: listPricesBase,
+              guardPrices,
+              product: {
+                currentCost: cartItem.product.currentCost,
+                lastEntryPrice: cartItem.product.lastEntryPrice,
+              },
+              priceVisibility: effectiveVisibility,
+            });
+            listPrices = lastPriceResult.prices;
+          } catch (error) {
+            console.error('Customer last price failed', { customerId: customer.id, error });
+          }
+        }
+
+        unitPrice = priceType === 'INVOICED' ? listPrices.invoiced : listPrices.white;
+      }
+
+      const agreement = await prisma.customerPriceAgreement.findFirst({
+        where: {
+          customerId: customer.id,
+          productId: cartItem.productId,
+        },
+        select: {
+          priceInvoiced: true,
+          priceWhite: true,
+          customerProductCode: true,
+          minQuantity: true,
+          validFrom: true,
+          validTo: true,
+        },
+      });
+
+      if (agreement && isAgreementApplicable(agreement, new Date(), nextQuantity)) {
+        unitPrice = resolveAgreementPrice(agreement, priceType, unitPrice);
+      }
+
+      const updateData: { quantity?: number; unitPrice?: number; lineNote?: string | null } = {
+        unitPrice,
+      };
+
+      if (hasQuantity) {
+        updateData.quantity = nextQuantity;
+      }
+
+      if (lineNote !== undefined) {
+        const normalizedNote = String(lineNote).trim();
+        updateData.lineNote = normalizedNote ? normalizedNote : null;
       }
 
       await prisma.cartItem.update({
         where: { id: itemId },
-        data: { quantity },
+        data: updateData,
       });
+
+      const sessionId = typeof req.headers['x-session-id'] === 'string' ? req.headers['x-session-id'] : undefined;
+      try {
+        await customerActivityService.trackEvent({
+          type: 'CART_UPDATE',
+          userId: user.id,
+          customerId: customer?.id ?? user.id,
+          sessionId,
+          productId: cartItem.productId,
+          productCode: cartItem.product.mikroCode,
+          cartItemId: cartItem.id,
+          quantity: hasQuantity ? nextQuantity : undefined,
+          meta: { priceType: cartItem.priceType, priceMode: effectivePriceMode, lineNote: updateData.lineNote ?? undefined },
+          ip: req.ip,
+          userAgent: req.headers['user-agent'],
+        });
+      } catch (error) {
+        console.error('Customer activity log failed (cart update):', error);
+      }
 
       res.json({ message: 'Cart item updated' });
     } catch (error) {
@@ -633,9 +2198,39 @@ export class CustomerController {
     try {
       const { itemId } = req.params;
 
+      const cartItem = await prisma.cartItem.findUnique({
+        where: { id: itemId },
+        include: {
+          product: true,
+        },
+      });
+
+      if (!cartItem) {
+        return res.status(404).json({ error: 'Cart item not found' });
+      }
+
       await prisma.cartItem.delete({
         where: { id: itemId },
       });
+
+      const sessionId = typeof req.headers['x-session-id'] === 'string' ? req.headers['x-session-id'] : undefined;
+      try {
+        const customerId = await customerActivityService.resolveCustomerId(req.user!.userId);
+        await customerActivityService.trackEvent({
+          type: 'CART_REMOVE',
+          userId: req.user!.userId,
+          customerId: customerId ?? undefined,
+          sessionId,
+          productId: cartItem.productId,
+          productCode: cartItem.product?.mikroCode,
+          cartItemId: cartItem.id,
+          quantity: cartItem.quantity,
+          ip: req.ip,
+          userAgent: req.headers['user-agent'],
+        });
+      } catch (error) {
+        console.error('Customer activity log failed (cart remove):', error);
+      }
 
       res.json({ message: 'Item removed from cart' });
     } catch (error) {
@@ -648,7 +2243,20 @@ export class CustomerController {
    */
   async createOrder(req: Request, res: Response, next: NextFunction) {
     try {
-      const result = await orderService.createOrderFromCart(req.user!.userId);
+      const user = await prisma.user.findUnique({
+        where: { id: req.user!.userId },
+        select: { parentCustomerId: true },
+      });
+
+      if (user?.parentCustomerId) {
+        return res.status(403).json({ error: 'Sub users cannot create orders' });
+      }
+
+      const { customerOrderNumber, deliveryLocation } = req.body || {};
+      const result = await orderService.createOrderFromCart(req.user!.userId, {
+        customerOrderNumber,
+        deliveryLocation,
+      });
 
       res.status(201).json({
         message: 'Order created successfully',
@@ -692,6 +2300,58 @@ export class CustomerController {
       next(error);
     }
   }
+
+  /**
+   * POST /api/analytics/events
+   */
+  async trackActivityEvent(req: Request, res: Response, next: NextFunction) {
+    try {
+      const {
+        type,
+        pagePath,
+        pageTitle,
+        referrer,
+        productId,
+        productCode,
+        cartItemId,
+        quantity,
+        durationSeconds,
+        clickCount,
+        meta,
+        sessionId,
+      } = req.body || {};
+
+      const userId = req.user!.userId;
+      const resolvedCustomerId = await customerActivityService.resolveCustomerId(userId);
+      const fallbackSessionId =
+        typeof req.headers['x-session-id'] === 'string' ? req.headers['x-session-id'] : undefined;
+
+      await customerActivityService.trackEvent({
+        type,
+        userId,
+        customerId: resolvedCustomerId ?? undefined,
+        sessionId: sessionId || fallbackSessionId,
+        pagePath,
+        pageTitle,
+        referrer,
+        productId,
+        productCode,
+        cartItemId,
+        quantity,
+        durationSeconds,
+        clickCount,
+        meta,
+        ip: req.ip,
+        userAgent: req.headers['user-agent'],
+      });
+
+      res.json({ success: true });
+    } catch (error) {
+      next(error);
+    }
+  }
 }
 
 export default new CustomerController();
+
+

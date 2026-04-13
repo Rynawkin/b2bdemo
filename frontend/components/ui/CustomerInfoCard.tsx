@@ -4,8 +4,8 @@ import { getCustomerTypeName } from '@/lib/utils/customerTypes';
 
 interface CustomerInfo {
   name: string;
-  email: string;
-  mikroCariCode: string;
+  email?: string;
+  mikroCariCode?: string;
   customerType?: 'BAYI' | 'PERAKENDE' | 'VIP' | 'OZEL';
   city?: string;
   district?: string;
@@ -13,6 +13,9 @@ interface CustomerInfo {
   groupCode?: string;
   sectorCode?: string;
   paymentTerm?: number;
+  paymentPlanNo?: number | null;
+  paymentPlanCode?: string | null;
+  paymentPlanName?: string | null;
   hasEInvoice?: boolean;
   balance?: number;
   isLocked?: boolean;
@@ -38,6 +41,13 @@ const getCustomerTypeBadge = (type?: string) => {
 };
 
 export function CustomerInfoCard({ customer, compact = false }: CustomerInfoCardProps) {
+  const paymentPlanLabel =
+    customer.paymentPlanName || customer.paymentPlanCode
+      ? [customer.paymentPlanCode, customer.paymentPlanName].filter(Boolean).join(' - ')
+      : customer.paymentTerm !== undefined && customer.paymentTerm !== null
+        ? `${customer.paymentTerm} gun`
+        : null;
+
   if (compact) {
     return (
       <div className="bg-gray-50 rounded-lg p-3 space-y-2 text-sm">
@@ -48,7 +58,7 @@ export function CustomerInfoCard({ customer, compact = false }: CustomerInfoCard
         </div>
         <div className="grid grid-cols-2 gap-2 text-xs text-gray-600">
           <div>
-            <span className="font-medium">Mikro Cari:</span> {customer.mikroCariCode}
+            <span className="font-medium">Mikro Cari:</span> {customer.mikroCariCode || '-'}
           </div>
           {customer.city && (
             <div>
@@ -61,9 +71,9 @@ export function CustomerInfoCard({ customer, compact = false }: CustomerInfoCard
               <span className="font-medium">Telefon:</span> {customer.phone}
             </div>
           )}
-          {customer.paymentTerm !== undefined && customer.paymentTerm !== null && (
+          {paymentPlanLabel && (
             <div>
-              <span className="font-medium">Vade:</span> {customer.paymentTerm} gun
+              <span className="font-medium">Vade:</span> {paymentPlanLabel}
             </div>
           )}
         </div>
@@ -76,7 +86,7 @@ export function CustomerInfoCard({ customer, compact = false }: CustomerInfoCard
       <div className="flex items-start justify-between mb-4">
         <div>
           <h4 className="font-bold text-lg text-gray-900">{customer.name}</h4>
-          <p className="text-sm text-gray-600">{customer.email}</p>
+          {customer.email && <p className="text-sm text-gray-600">{customer.email}</p>}
         </div>
         <div className="flex flex-wrap gap-2 justify-end">
           {customer.customerType && getCustomerTypeBadge(customer.customerType)}
@@ -88,7 +98,7 @@ export function CustomerInfoCard({ customer, compact = false }: CustomerInfoCard
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 text-sm">
         <div className="bg-white rounded p-3 shadow-sm">
           <p className="text-gray-500 text-xs mb-1">Mikro Cari Kodu</p>
-          <p className="font-semibold text-primary-700">{customer.mikroCariCode}</p>
+          <p className="font-semibold text-primary-700">{customer.mikroCariCode || '-'}</p>
         </div>
 
         {customer.city && (
@@ -108,10 +118,10 @@ export function CustomerInfoCard({ customer, compact = false }: CustomerInfoCard
           </div>
         )}
 
-        {customer.paymentTerm !== undefined && customer.paymentTerm !== null && (
+        {paymentPlanLabel && (
           <div className="bg-white rounded p-3 shadow-sm">
-            <p className="text-gray-500 text-xs mb-1">Vade (Gun)</p>
-            <p className="font-semibold text-gray-900">{customer.paymentTerm} gun</p>
+            <p className="text-gray-500 text-xs mb-1">Vade</p>
+            <p className="font-semibold text-gray-900">{paymentPlanLabel}</p>
           </div>
         )}
 

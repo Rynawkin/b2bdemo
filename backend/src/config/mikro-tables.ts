@@ -18,8 +18,12 @@ export const MIKRO_TABLES = {
   PRODUCTS_COLUMNS: {
     CODE: 'sto_kod',
     NAME: 'sto_isim',
+    FOREIGN_NAME: 'sto_yabanci_isim',
+    BRAND_CODE: 'sto_marka_kodu',
     CATEGORY_CODE: 'sto_kategori_kodu',
     UNIT: 'sto_birim1_ad',
+    UNIT2: 'sto_birim2_ad',
+    UNIT2_FACTOR: 'sto_birim2_katsayi',
     VAT_RATE: 'sto_toptan_Vergi', // VAT kodu (dbo.fn_VergiYuzde ile çevrilmeli)
     CURRENT_COST: 'sto_standartmaliyet', // Standart maliyet
     PASSIVE: 'sto_pasif_fl', // false=aktif, true=pasif
@@ -59,6 +63,7 @@ export const MIKRO_TABLES = {
     // Müşteri ve ürün
     CUSTOMER_CODE: 'sip_musteri_kod', // "120.05.125"
     PRODUCT_CODE: 'sip_stok_kod', // "B108195"
+    WAREHOUSE_NO: 'sip_depono', // Sipariş satırının depo numarası
 
     // Miktar bilgileri
     QUANTITY: 'sip_miktar', // Sipariş miktarı

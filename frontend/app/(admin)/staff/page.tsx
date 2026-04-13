@@ -1,13 +1,12 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
 import toast from 'react-hot-toast';
 import adminApi from '@/lib/api/admin';
+import { usePermissions } from '@/hooks/usePermissions';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
-import { LogoLink } from '@/components/ui/Logo';
 import { Badge } from '@/components/ui/Badge';
 
 interface StaffMember {
@@ -21,7 +20,7 @@ interface StaffMember {
 }
 
 export default function StaffManagementPage() {
-  const router = useRouter();
+  const { hasPermission, loading: permissionsLoading } = usePermissions();
   const [staff, setStaff] = useState<StaffMember[]>([]);
   const [availableSectorCodes, setAvailableSectorCodes] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -33,7 +32,7 @@ export default function StaffManagementPage() {
     email: '',
     password: '',
     name: '',
-    role: 'SALES_REP' as 'SALES_REP' | 'MANAGER',
+    role: 'SALES_REP' as 'SALES_REP' | 'MANAGER' | 'DEPOCU',
     assignedSectorCodes: [] as string[],
   });
 
@@ -48,9 +47,13 @@ export default function StaffManagementPage() {
   const [selectedSectorCode, setSelectedSectorCode] = useState('');
 
   useEffect(() => {
+    if (permissionsLoading) return;
+    if (!hasPermission('admin:staff')) {
+      return;
+    }
     fetchStaff();
     fetchSectorCodes();
-  }, []);
+  }, [permissionsLoading, hasPermission]);
 
   const fetchSectorCodes = async () => {
     try {
@@ -131,6 +134,7 @@ export default function StaffManagementPage() {
       ADMIN: { label: 'Admin', variant: 'success' },
       MANAGER: { label: 'Manager', variant: 'info' },
       SALES_REP: { label: 'Satış Temsilcisi', variant: 'warning' },
+      DEPOCU: { label: 'Depocu', variant: 'info' },
     };
     const badge = badges[role] || { label: role, variant: 'info' };
     return <Badge variant={badge.variant}>{badge.label}</Badge>;
@@ -146,36 +150,17 @@ export default function StaffManagementPage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <header className="bg-gradient-to-r from-primary-700 to-primary-600 shadow-lg">
-        <div className="container-custom py-4">
-          <div className="flex justify-between items-center">
-            <div className="flex items-center gap-6">
-              <LogoLink href="/dashboard" variant="light" />
-              <div>
-                <h1 className="text-xl font-bold text-white">👥 Personel Yönetimi</h1>
-                <p className="text-sm text-primary-100">MANAGER ve SALES_REP kullanıcılarını yönetin</p>
-              </div>
-            </div>
-            <div className="flex gap-3">
-              <Button
-                onClick={() => setShowCreateModal(true)}
-                className="bg-white text-primary-700 hover:bg-primary-50"
-              >
-                + Yeni Kullanıcı
-              </Button>
-              <Button
-                variant="secondary"
-                onClick={() => router.push('/dashboard')}
-                className="bg-white text-primary-700 hover:bg-primary-50"
-              >
-                ← Dashboard
-              </Button>
-            </div>
-          </div>
-        </div>
-      </header>
 
       <div className="container-custom py-8">
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900">Personel Yonetimi</h1>
+            <p className="text-sm text-gray-600">MANAGER, SALES_REP ve DEPOCU kullanicilarini yonetin</p>
+          </div>
+          <Button onClick={() => setShowCreateModal(true)} variant="secondary">
+            + Yeni Kullanici
+          </Button>
+        </div>
         <div className="space-y-4">
           {staff.map((member) => (
             <Card key={member.id}>
@@ -257,6 +242,7 @@ export default function StaffManagementPage() {
                 >
                   <option value="SALES_REP">Satış Temsilcisi</option>
                   <option value="MANAGER">Manager</option>
+                  <option value="DEPOCU">Depocu</option>
                 </select>
               </div>
 
@@ -447,3 +433,5 @@ export default function StaffManagementPage() {
     </div>
   );
 }
+
+

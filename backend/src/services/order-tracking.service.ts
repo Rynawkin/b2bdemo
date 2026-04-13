@@ -1,24 +1,29 @@
-/**
+﻿/**
  * Order Tracking Service
  *
- * Mikro'dan bekleyen müşteri siparişlerini çeker,
- * PostgreSQL'e kaydeder ve müşterilere mail gönderir.
+ * Mikro'dan bekleyen mÃ¼ÅŸteri sipariÅŸlerini Ã§eker,
+ * PostgreSQL'e kaydeder ve mÃ¼ÅŸterilere mail gÃ¶nderir.
  */
 
 import { prisma } from '../utils/prisma';
 import mikroService from './mikroFactory.service';
 import { MIKRO_TABLES } from '../config/mikro-tables';
+import warehouseWorkflowService from './warehouse-workflow.service';
 
 interface PendingOrderItem {
   productCode: string;
   productName: string;
   unit: string;
+  warehouseCode?: string | null;
   quantity: number;
   deliveredQty: number;
   remainingQty: number;
+  reservedQty?: number;
+  reservedDeliveredQty?: number;
   unitPrice: number;
   lineTotal: number;
   vat: number;
+  rowNumber?: number;
 }
 
 interface PendingOrder {
@@ -36,11 +41,79 @@ interface PendingOrder {
   totalAmount: number;
   totalVAT: number;
   grandTotal: number;
+  warehouseStatus?: string;
+  warehouseStatusUpdatedAt?: Date | null;
 }
 
 class OrderTrackingService {
+  private async reconcileDeliveredQuantitiesFromMikro(): Promise<void> {
+    await mikroService.executeQuery(`
+      WITH DeliveryAgg AS (
+        SELECT
+          sth_sip_uid as sip_guid,
+          SUM(ISNULL(sth_miktar, 0)) as delivered_qty
+        FROM STOK_HAREKETLERI WITH (NOLOCK)
+        WHERE ISNULL(sth_iptal, 0) = 0
+          AND ISNULL(sth_tip, 1) = 1
+          AND ISNULL(sth_cins, 0) = 0
+          AND ISNULL(sth_evraktip, 0) = 1
+          AND sth_sip_uid IS NOT NULL
+          AND sth_sip_uid <> '00000000-0000-0000-0000-000000000000'
+        GROUP BY sth_sip_uid
+      ),
+      Recalculated AS (
+        SELECT
+          s.sip_Guid as sip_guid,
+          CASE
+            WHEN ISNULL(d.delivered_qty, 0) > ISNULL(s.sip_miktar, 0) THEN ISNULL(s.sip_miktar, 0)
+            ELSE ISNULL(d.delivered_qty, 0)
+          END as next_delivered_qty,
+          CASE
+            WHEN ISNULL(s.sip_rezervasyon_miktari, 0) <= 0 THEN ISNULL(s.sip_rezerveden_teslim_edilen, 0)
+            WHEN ISNULL(d.delivered_qty, 0) > ISNULL(s.sip_rezervasyon_miktari, 0) THEN ISNULL(s.sip_rezervasyon_miktari, 0)
+            ELSE ISNULL(d.delivered_qty, 0)
+          END as next_reserved_delivered_qty
+        FROM SIPARISLER s
+        LEFT JOIN DeliveryAgg d
+          ON d.sip_guid = s.sip_Guid
+        WHERE ISNULL(s.sip_iptal, 0) = 0
+          AND ISNULL(s.sip_tip, 0) = 0
+          AND (
+            ISNULL(s.sip_teslim_miktar, 0) > 0
+            OR EXISTS (
+              SELECT 1
+              FROM STOK_HAREKETLERI h WITH (NOLOCK)
+              WHERE h.sth_sip_uid = s.sip_Guid
+                AND ISNULL(h.sth_tip, 1) = 1
+                AND ISNULL(h.sth_cins, 0) = 0
+                AND ISNULL(h.sth_evraktip, 0) = 1
+            )
+          )
+      )
+      UPDATE s
+      SET
+        sip_teslim_miktar = r.next_delivered_qty,
+        sip_rezerveden_teslim_edilen = r.next_reserved_delivered_qty,
+        sip_kapat_fl = CASE
+          WHEN ISNULL(s.sip_miktar, 0) <= r.next_delivered_qty THEN 1
+          ELSE 0
+        END,
+        sip_lastup_date = GETDATE()
+      FROM SIPARISLER s
+      INNER JOIN Recalculated r
+        ON r.sip_guid = s.sip_Guid
+      WHERE
+        ISNULL(s.sip_teslim_miktar, 0) <> r.next_delivered_qty
+        OR ISNULL(s.sip_rezerveden_teslim_edilen, 0) <> r.next_reserved_delivered_qty
+        OR ISNULL(s.sip_kapat_fl, 0) <> CASE
+          WHEN ISNULL(s.sip_miktar, 0) <= r.next_delivered_qty THEN 1
+          ELSE 0
+        END
+    `);
+  }
+
   /**
-   * Mikro'dan bekleyen siparişleri çek ve PostgreSQL'e kaydet
+   * Mikro'dan bekleyen sipariÅŸleri Ã§ek ve PostgreSQL'e kaydet
    */
   async syncPendingOrders(): Promise<{
     success: boolean;
@@ -49,17 +122,17 @@ class OrderTrackingService {
     message: string;
   }> {
     try {
-      console.log('🔄 Bekleyen siparişler sync başladı...');
+      console.log('ğŸ”„ Bekleyen sipariÅŸler sync baÅŸladÄ±...');
 
-      // 1. Mikro'dan bekleyen siparişleri çek
+      // 1. Mikro'dan bekleyen sipariÅŸleri Ã§ek
       const pendingOrders = await this.fetchPendingOrdersFromMikro();
-      console.log(`✅ ${pendingOrders.length} adet bekleyen sipariş satırı çekildi`);
+      console.log(`âœ… ${pendingOrders.length} adet bekleyen sipariÅŸ satÄ±rÄ± Ã§ekildi`);
 
-      // 2. Müşteri bazında grupla
+      // 2. MÃ¼ÅŸteri bazÄ±nda grupla
       const groupedOrders = this.groupOrdersByCustomer(pendingOrders);
-      console.log(`✅ ${groupedOrders.length} müşteri için sipariş gruplanı`);
+      console.log(`âœ… ${groupedOrders.length} mÃ¼ÅŸteri iÃ§in sipariÅŸ gruplanÄ±`);
 
-      // 3. Mevcut kayıtların emailSent durumunu sakla
+      // 3. Mevcut kayÄ±tlarÄ±n emailSent durumunu sakla
       const existingOrders = await prisma.pendingMikroOrder.findMany({
         select: {
           mikroOrderNumber: true,
@@ -73,9 +146,9 @@ class OrderTrackingService {
 
       // 4. Mevcut cache'i temizle
       await prisma.pendingMikroOrder.deleteMany({});
-      console.log('✅ Eski cache temizlendi');
+      console.log('âœ… Eski cache temizlendi');
 
-      // 5. Yeni verileri kaydet (emailSent durumunu koru) - upsert kullan (unique constraint için)
+      // 5. Yeni verileri kaydet (emailSent durumunu koru) - upsert kullan (unique constraint iÃ§in)
       for (const order of groupedOrders) {
         const previousEmailStatus = emailSentMap.get(order.mikroOrderNumber);
 
@@ -121,7 +194,7 @@ class OrderTrackingService {
         });
       }
 
-      // 6. Settings'e son sync zamanını kaydet
+      // 6. Settings'e son sync zamanÄ±nÄ± kaydet
       const settings = await prisma.orderTrackingSettings.findFirst();
       if (settings) {
         await prisma.orderTrackingSettings.update({
@@ -130,18 +203,18 @@ class OrderTrackingService {
         });
       }
 
-      console.log('✅ Bekleyen siparişler sync tamamlandı');
+      console.log('âœ… Bekleyen sipariÅŸler sync tamamlandÄ±');
 
       return {
         success: true,
         ordersCount: groupedOrders.length,
         customersCount: new Set(groupedOrders.map((o) => o.customerCode)).size,
-        message: `${groupedOrders.length} sipariş, ${
+        message: `${groupedOrders.length} sipariÅŸ, ${
           new Set(groupedOrders.map((o) => o.customerCode)).size
-        } müşteri sync edildi`,
+        } mÃ¼ÅŸteri sync edildi`,
       };
     } catch (error: any) {
-      console.error('❌ Sync hatası:', error);
+      console.error('âŒ Sync hatasÄ±:', error);
       return {
         success: false,
         ordersCount: 0,
@@ -152,12 +225,12 @@ class OrderTrackingService {
   }
 
   /**
-   * Mikro'dan bekleyen siparişleri çek (ham veri)
+   * Mikro'dan bekleyen sipariÅŸleri Ã§ek (ham veri)
    */
   private async fetchPendingOrdersFromMikro(): Promise<any[]> {
-    // İki aşamalı yaklaşım:
-    // 1. Sadece en az 1 kalemi bekleyen SİPARİŞLERİ bul (WITH kullanarak)
-    // 2. O siparişlerin TÜM satırlarını getir (hem delivered hem pending)
+    // Ä°ki aÅŸamalÄ± yaklaÅŸÄ±m:
+    // 1. Sadece en az 1 kalemi bekleyen SÄ°PARÄ°ÅLERÄ° bul (WITH kullanarak)
+    // 2. O sipariÅŸlerin TÃœM satÄ±rlarÄ±nÄ± getir (hem delivered hem pending)
     const query = `
       WITH PendingOrderNumbers AS (
         SELECT DISTINCT
@@ -165,6 +238,7 @@ class OrderTrackingService {
           ${MIKRO_TABLES.ORDERS_COLUMNS.ORDER_SEQUENCE} as sira
         FROM ${MIKRO_TABLES.ORDERS}
         WHERE ${MIKRO_TABLES.ORDERS_COLUMNS.CUSTOMER_CODE} IS NOT NULL
+          AND ${MIKRO_TABLES.ORDERS_COLUMNS.TYPE} = 0
           AND ${MIKRO_TABLES.ORDERS_COLUMNS.CANCELLED} = 0
           AND ${MIKRO_TABLES.ORDERS_COLUMNS.CLOSED} = 0
           AND (${MIKRO_TABLES.ORDERS_COLUMNS.QUANTITY} - ISNULL(${MIKRO_TABLES.ORDERS_COLUMNS.DELIVERED_QUANTITY}, 0)) > 0
@@ -176,6 +250,7 @@ class OrderTrackingService {
         s.sip_tarih,
         s.sip_teslim_tarih,
         s.sip_musteri_kod,
+        s.${MIKRO_TABLES.ORDERS_COLUMNS.WAREHOUSE_NO} as depo_kodu,
         c.cari_unvan1 as musteri_adi,
         c.${MIKRO_TABLES.CARI_COLUMNS.EMAIL} as musteri_email,
         c.${MIKRO_TABLES.CARI_COLUMNS.SECTOR_CODE} as sektor_kodu,
@@ -185,6 +260,8 @@ class OrderTrackingService {
         s.sip_miktar,
         ISNULL(s.sip_teslim_miktar, 0) as teslim_miktar,
         (s.sip_miktar - ISNULL(s.sip_teslim_miktar, 0)) as kalan_miktar,
+        ISNULL(s.sip_rezervasyon_miktari, 0) as rezerve_miktar,
+        ISNULL(s.sip_rezerveden_teslim_edilen, 0) as rezerve_teslim_miktar,
         s.sip_b_fiyat as birim_fiyat,
         s.sip_tutar as tutar,
         s.sip_vergi as kdv
@@ -197,8 +274,13 @@ class OrderTrackingService {
       LEFT JOIN ${MIKRO_TABLES.CARI} c
         ON s.${MIKRO_TABLES.ORDERS_COLUMNS.CUSTOMER_CODE} = c.${MIKRO_TABLES.CARI_COLUMNS.CODE}
       WHERE s.${MIKRO_TABLES.ORDERS_COLUMNS.CUSTOMER_CODE} IS NOT NULL
+        AND s.${MIKRO_TABLES.ORDERS_COLUMNS.TYPE} = 0
         AND s.${MIKRO_TABLES.ORDERS_COLUMNS.CANCELLED} = 0
         AND s.${MIKRO_TABLES.ORDERS_COLUMNS.CLOSED} = 0
+        AND (
+          c.${MIKRO_TABLES.CARI_COLUMNS.SECTOR_CODE} IS NULL
+          OR c.${MIKRO_TABLES.CARI_COLUMNS.SECTOR_CODE} NOT LIKE 'SATICI%'
+        )
       ORDER BY s.${MIKRO_TABLES.ORDERS_COLUMNS.DATE} DESC,
                s.${MIKRO_TABLES.ORDERS_COLUMNS.ORDER_SERIES},
                s.${MIKRO_TABLES.ORDERS_COLUMNS.ORDER_SEQUENCE}
@@ -209,10 +291,74 @@ class OrderTrackingService {
   }
 
   /**
-   * Siparişleri müşteri bazında grupla
+   * Mikro'dan tedarikçilere verilen (satın alma) açık siparişleri çek
+   * sip_tip = 1
+   */
+  private async fetchSupplierOrdersFromMikro(): Promise<any[]> {
+    const query = `
+      WITH PendingSupplierOrderNumbers AS (
+        SELECT DISTINCT
+          ${MIKRO_TABLES.ORDERS_COLUMNS.ORDER_SERIES} as seri,
+          ${MIKRO_TABLES.ORDERS_COLUMNS.ORDER_SEQUENCE} as sira
+        FROM ${MIKRO_TABLES.ORDERS} s
+        LEFT JOIN ${MIKRO_TABLES.CARI} c
+          ON s.${MIKRO_TABLES.ORDERS_COLUMNS.CUSTOMER_CODE} = c.${MIKRO_TABLES.CARI_COLUMNS.CODE}
+        WHERE s.${MIKRO_TABLES.ORDERS_COLUMNS.CUSTOMER_CODE} IS NOT NULL
+          AND s.${MIKRO_TABLES.ORDERS_COLUMNS.TYPE} = 1
+          AND s.${MIKRO_TABLES.ORDERS_COLUMNS.CANCELLED} = 0
+          AND s.${MIKRO_TABLES.ORDERS_COLUMNS.CLOSED} = 0
+          AND (${MIKRO_TABLES.ORDERS_COLUMNS.QUANTITY} - ISNULL(${MIKRO_TABLES.ORDERS_COLUMNS.DELIVERED_QUANTITY}, 0)) > 0
+          AND c.${MIKRO_TABLES.CARI_COLUMNS.SECTOR_CODE} LIKE 'SATICI%'
+      )
+      SELECT
+        s.sip_evrakno_seri,
+        s.sip_evrakno_sira,
+        s.sip_satirno,
+        s.sip_tarih,
+        s.sip_teslim_tarih,
+        s.sip_musteri_kod,
+        s.${MIKRO_TABLES.ORDERS_COLUMNS.WAREHOUSE_NO} as depo_kodu,
+        c.cari_unvan1 as musteri_adi,
+        c.${MIKRO_TABLES.CARI_COLUMNS.EMAIL} as musteri_email,
+        c.${MIKRO_TABLES.CARI_COLUMNS.SECTOR_CODE} as sektor_kodu,
+        s.sip_stok_kod,
+        st.sto_isim as urun_adi,
+        st.sto_birim1_ad as birim,
+        s.sip_miktar,
+        ISNULL(s.sip_teslim_miktar, 0) as teslim_miktar,
+        (s.sip_miktar - ISNULL(s.sip_teslim_miktar, 0)) as kalan_miktar,
+        ISNULL(s.sip_rezervasyon_miktari, 0) as rezerve_miktar,
+        ISNULL(s.sip_rezerveden_teslim_edilen, 0) as rezerve_teslim_miktar,
+        s.sip_b_fiyat as birim_fiyat,
+        s.sip_tutar as tutar,
+        s.sip_vergi as kdv
+      FROM ${MIKRO_TABLES.ORDERS} s
+      INNER JOIN PendingSupplierOrderNumbers p
+        ON s.${MIKRO_TABLES.ORDERS_COLUMNS.ORDER_SERIES} = p.seri
+        AND s.${MIKRO_TABLES.ORDERS_COLUMNS.ORDER_SEQUENCE} = p.sira
+      LEFT JOIN ${MIKRO_TABLES.PRODUCTS} st
+        ON s.${MIKRO_TABLES.ORDERS_COLUMNS.PRODUCT_CODE} = st.${MIKRO_TABLES.PRODUCTS_COLUMNS.CODE}
+      LEFT JOIN ${MIKRO_TABLES.CARI} c
+        ON s.${MIKRO_TABLES.ORDERS_COLUMNS.CUSTOMER_CODE} = c.${MIKRO_TABLES.CARI_COLUMNS.CODE}
+      WHERE s.${MIKRO_TABLES.ORDERS_COLUMNS.CUSTOMER_CODE} IS NOT NULL
+        AND s.${MIKRO_TABLES.ORDERS_COLUMNS.TYPE} = 1
+        AND s.${MIKRO_TABLES.ORDERS_COLUMNS.CANCELLED} = 0
+        AND s.${MIKRO_TABLES.ORDERS_COLUMNS.CLOSED} = 0
+        AND c.${MIKRO_TABLES.CARI_COLUMNS.SECTOR_CODE} LIKE 'SATICI%'
+      ORDER BY s.${MIKRO_TABLES.ORDERS_COLUMNS.DATE} DESC,
+               s.${MIKRO_TABLES.ORDERS_COLUMNS.ORDER_SERIES},
+               s.${MIKRO_TABLES.ORDERS_COLUMNS.ORDER_SEQUENCE}
+    `;
+
+    const result = await mikroService.executeQuery(query);
+    return result;
+  }
+
+  /**
+   * SipariÅŸleri mÃ¼ÅŸteri bazÄ±nda grupla
    *
-   * Her müşteri için siparişler tek bir kayıtta birleştirilir.
-   * Aynı sipariş numarasındaki satırlar items array'ine eklenir.
+   * Her mÃ¼ÅŸteri iÃ§in sipariÅŸler tek bir kayÄ±tta birleÅŸtirilir.
+   * AynÄ± sipariÅŸ numarasÄ±ndaki satÄ±rlar items array'ine eklenir.
    */
   private groupOrdersByCustomer(rawOrders: any[]): PendingOrder[] {
     const orderMap = new Map<string, PendingOrder>();
@@ -220,17 +366,17 @@ class OrderTrackingService {
     for (const row of rawOrders) {
       const orderNumber = `${row.sip_evrakno_seri}-${row.sip_evrakno_sira}`;
 
-      // Bu sipariş daha önce işlendi mi?
+      // Bu sipariÅŸ daha Ã¶nce iÅŸlendi mi?
       let order = orderMap.get(orderNumber);
 
       if (!order) {
-        // Yeni sipariş oluştur
+        // Yeni sipariÅŸ oluÅŸtur
         order = {
           mikroOrderNumber: orderNumber,
           orderSeries: row.sip_evrakno_seri,
           orderSequence: row.sip_evrakno_sira,
           customerCode: row.sip_musteri_kod,
-          customerName: row.musteri_adi || 'Bilinmeyen Müşteri',
+          customerName: row.musteri_adi || 'Bilinmeyen MÃ¼ÅŸteri',
           customerEmail: row.musteri_email || null,
           sectorCode: row.sektor_kodu || null,
           orderDate: new Date(row.sip_tarih),
@@ -244,51 +390,61 @@ class OrderTrackingService {
         orderMap.set(orderNumber, order);
       }
 
-      // Aynı satır numarası daha önce eklendi mi? (Duplicate kontrolü)
-      const itemKey = `${row.sip_stok_kod}-${row.sip_satirno}`;
+      const remainingQty = Number(row.kalan_miktar) || 0;
+      if (remainingQty <= 0) {
+        continue;
+      }
+
+      // AynÄ± satÄ±r numarasÄ± daha Ã¶nce eklendi mi? (Duplicate kontrolÃ¼)
       const isDuplicate = order.items.some(
         (item) => item.productCode === row.sip_stok_kod &&
                   (item as any).rowNumber === row.sip_satirno
       );
 
       if (isDuplicate) {
-        console.warn(`⚠️ Duplicate satır atlandı: Sipariş ${orderNumber}, Satır ${row.sip_satirno}, Ürün ${row.sip_stok_kod}`);
+        console.warn(`âš ï¸ Duplicate satÄ±r atlandÄ±: SipariÅŸ ${orderNumber}, SatÄ±r ${row.sip_satirno}, ÃœrÃ¼n ${row.sip_stok_kod}`);
         continue;
       }
 
-      // Kalan sipariş tutarını hesapla (kalan_miktar × birim_fiyat)
-      const remainingTotal = row.kalan_miktar * row.birim_fiyat;
+      // Kalan sipariÅŸ tutarÄ±nÄ± hesapla (kalan_miktar Ã— birim_fiyat)
+      const remainingTotal = remainingQty * row.birim_fiyat;
 
       // Kalan KDV'yi oransal olarak hesapla
       const kdvRate = row.tutar > 0 ? row.kdv / row.tutar : 0;
       const remainingVat = remainingTotal * kdvRate;
+      const reserveQty = Math.max(Number(row.rezerve_miktar || 0), 0);
+      const reserveDeliveredQty = Math.max(Number(row.rezerve_teslim_miktar || 0), 0);
+      const activeReserveQty = Math.max(reserveQty - reserveDeliveredQty, 0);
 
-      // Satır detayını ekle
+      // SatÄ±r detayÄ±nÄ± ekle
       const item: any = {
         productCode: row.sip_stok_kod,
         productName: row.urun_adi || row.sip_stok_kod,
         unit: row.birim || 'ADET',
+        warehouseCode: row.depo_kodu !== undefined && row.depo_kodu !== null ? String(row.depo_kodu) : null,
         quantity: row.sip_miktar,
         deliveredQty: row.teslim_miktar,
-        remainingQty: row.kalan_miktar,
+        remainingQty,
+        reservedQty: activeReserveQty,
+        reservedDeliveredQty: reserveDeliveredQty,
         unitPrice: row.birim_fiyat,
         lineTotal: remainingTotal,  // KALAN TUTAR
         vat: remainingVat,  // KALAN KDV
-        rowNumber: row.sip_satirno,  // Satır numarasını sakla (duplicate kontrolü için)
+        rowNumber: row.sip_satirno,  // SatÄ±r numarasÄ±nÄ± sakla (duplicate kontrolÃ¼ iÃ§in)
       };
 
       order.items.push(item);
       order.itemCount++;
       order.totalAmount += remainingTotal;  // KALAN TUTARI TOPLA
-      order.totalVAT += remainingVat;  // KALAN KDV'Yİ TOPLA
+      order.totalVAT += remainingVat;  // KALAN KDV'YÄ° TOPLA
       order.grandTotal = order.totalAmount + order.totalVAT;
     }
 
-    return Array.from(orderMap.values());
+    return Array.from(orderMap.values()).filter((order) => order.itemCount > 0);
   }
 
   /**
-   * Belirli bir müşterinin bekleyen siparişlerini getir
+   * Belirli bir mÃ¼ÅŸterinin bekleyen sipariÅŸlerini getir
    */
   async getCustomerPendingOrders(customerCode: string): Promise<PendingOrder[]> {
     const orders = await prisma.pendingMikroOrder.findMany({
@@ -296,6 +452,10 @@ class OrderTrackingService {
       orderBy: { orderDate: 'desc' },
     });
 
+    const workflowMap = await warehouseWorkflowService.getWorkflowStatusMap(
+      orders.map((order) => order.mikroOrderNumber)
+    );
+
     return orders.map((order) => ({
       mikroOrderNumber: order.mikroOrderNumber,
       orderSeries: order.orderSeries,
@@ -309,17 +469,23 @@ class OrderTrackingService {
       totalAmount: order.totalAmount,
       totalVAT: order.totalVAT,
       grandTotal: order.grandTotal,
+      warehouseStatus: workflowMap.get(order.mikroOrderNumber)?.status || 'PENDING',
+      warehouseStatusUpdatedAt: workflowMap.get(order.mikroOrderNumber)?.updatedAt || null,
     }));
   }
 
   /**
-   * Tüm bekleyen siparişleri getir (admin için)
+   * TÃ¼m bekleyen sipariÅŸleri getir (admin iÃ§in)
    */
   async getAllPendingOrders(): Promise<PendingOrder[]> {
     const orders = await prisma.pendingMikroOrder.findMany({
       orderBy: [{ orderDate: 'desc' }, { mikroOrderNumber: 'asc' }],
     });
 
+    const workflowMap = await warehouseWorkflowService.getWorkflowStatusMap(
+      orders.map((order) => order.mikroOrderNumber)
+    );
+
     return orders.map((order) => ({
       mikroOrderNumber: order.mikroOrderNumber,
       orderSeries: order.orderSeries,
@@ -333,23 +499,25 @@ class OrderTrackingService {
       totalAmount: order.totalAmount,
       totalVAT: order.totalVAT,
       grandTotal: order.grandTotal,
+      warehouseStatus: workflowMap.get(order.mikroOrderNumber)?.status || 'PENDING',
+      warehouseStatusUpdatedAt: workflowMap.get(order.mikroOrderNumber)?.updatedAt || null,
     }));
   }
 
   /**
-   * Sipariş takip ayarlarını getir
+   * SipariÅŸ takip ayarlarÄ±nÄ± getir
    */
   async getSettings() {
     let settings = await prisma.orderTrackingSettings.findFirst();
 
-    // Ayar yoksa oluştur
+    // Ayar yoksa oluÅŸtur
     if (!settings) {
       settings = await prisma.orderTrackingSettings.create({
         data: {
           syncEnabled: true,
-          syncSchedule: '0 8 * * 2,5', // Salı + Cuma, 08:00
+          syncSchedule: '0 8 * * 2,5', // SalÄ± + Cuma, 08:00
           emailEnabled: true,
-          emailSubject: 'Bekleyen Siparişleriniz',
+          emailSubject: 'Bekleyen SipariÅŸleriniz',
           emailTemplate: 'default',
         },
       });
@@ -359,7 +527,7 @@ class OrderTrackingService {
   }
 
   /**
-   * Sipariş takip ayarlarını güncelle
+   * SipariÅŸ takip ayarlarÄ±nÄ± gÃ¼ncelle
    */
   async updateSettings(data: {
     syncEnabled?: boolean;
@@ -381,13 +549,13 @@ class OrderTrackingService {
   }
 
   /**
-   * Müşteri bazında sipariş özetini getir
-   * Sektör kodu "satıcı" olanları filtreler (bunlar tedarikçi/satıcı siparişleridir)
+   * MÃ¼ÅŸteri bazÄ±nda sipariÅŸ Ã¶zetini getir
+   * SektÃ¶r kodu "satÄ±cÄ±" olanlarÄ± filtreler (bunlar tedarikÃ§i/satÄ±cÄ± sipariÅŸleridir)
    */
   async getCustomerSummary() {
     const orders = await prisma.pendingMikroOrder.findMany({
       where: {
-        // Sektör kodu "SATICI" olanları hariç tut (SATICI, SATICI BARTIR vb.)
+        // SektÃ¶r kodu "SATICI" olanlarÄ± hariÃ§ tut (SATICI, SATICI BARTIR vb.)
         OR: [
           { sectorCode: null },
           {
@@ -418,7 +586,7 @@ class OrderTrackingService {
       orderBy: [{ customerCode: 'asc' }, { orderDate: 'desc' }],
     });
 
-    // Müşteri bazında grupla
+    // MÃ¼ÅŸteri bazÄ±nda grupla
     const summary = new Map<
       string,
       {
@@ -473,35 +641,69 @@ class OrderTrackingService {
   }
 
   /**
-   * Satıcı/tedarikçi siparişlerini getir (sektör kodu "SATICI" olanlar)
+   * Tedarikçilere verilen açık satın alma siparişlerini getir (sip_tip=1)
    */
   async getSupplierSummary() {
-    const orders = await prisma.pendingMikroOrder.findMany({
-      where: {
-        sectorCode: {
-          startsWith: 'SATICI',
-        },
-      },
-      select: {
-        id: true,
-        mikroOrderNumber: true,
-        customerCode: true,
-        customerName: true,
-        customerEmail: true,
-        sectorCode: true,
-        orderDate: true,
-        deliveryDate: true,
-        items: true,
-        itemCount: true,
-        totalAmount: true,
-        totalVAT: true,
-        grandTotal: true,
-        emailSent: true,
-      },
-      orderBy: [{ customerCode: 'asc' }, { orderDate: 'desc' }],
-    });
+    const rawOrders = await this.fetchSupplierOrdersFromMikro();
+    const orders = this.groupOrdersByCustomer(rawOrders);
+    const supplierCodes = Array.from(
+      new Set(
+        orders
+          .map((order) => String(order.customerCode || '').trim())
+          .filter((code) => code.length > 0)
+      )
+    );
 
-    // Satıcı bazında grupla
+    const cityBySupplierCode = new Map<string, string | null>();
+    if (supplierCodes.length > 0) {
+      const inClause = supplierCodes
+        .map((code) => `'${code.replace(/'/g, "''")}'`)
+        .join(', ');
+
+      const supplierCityRows = await mikroService.executeQuery(`
+        SELECT
+          adr_cari_kod as cari_kod,
+          MAX(NULLIF(LTRIM(RTRIM(adr_il)), '')) as sehir
+        FROM CARI_HESAP_ADRESLERI WITH (NOLOCK)
+        WHERE adr_adres_no = '1'
+          AND adr_cari_kod IN (${inClause})
+        GROUP BY adr_cari_kod
+      `);
+
+      for (const row of supplierCityRows || []) {
+        const code = String(row.cari_kod || '').trim();
+        if (!code) continue;
+        const city = row.sehir ? String(row.sehir).trim() : null;
+        cityBySupplierCode.set(code, city || null);
+      }
+    }
+
+    const transmissionBySupplierCode = new Map<
+      string,
+      { transmittedAt: Date; transmittedByName: string | null }
+    >();
+    if (supplierCodes.length > 0) {
+      const transmissionRows = await prisma.supplierTransmissionLog.findMany({
+        where: { customerCode: { in: supplierCodes } },
+        orderBy: [{ customerCode: 'asc' }, { transmittedAt: 'desc' }],
+        select: {
+          customerCode: true,
+          transmittedAt: true,
+          transmittedByName: true,
+        },
+      });
+
+      for (const row of transmissionRows) {
+        const code = String(row.customerCode || '').trim();
+        if (!code || transmissionBySupplierCode.has(code)) continue;
+        transmissionBySupplierCode.set(code, {
+          transmittedAt: row.transmittedAt,
+          transmittedByName: row.transmittedByName || null,
+        });
+      }
+    }
+
+    // SatÄ±cÄ± bazÄ±nda grupla
     const summary = new Map<
       string,
       {
@@ -509,9 +711,12 @@ class OrderTrackingService {
         customerName: string;
         customerEmail: string | null;
         sectorCode: string | null;
+        city: string | null;
         ordersCount: number;
         totalAmount: number;
         emailSent: boolean;
+        lastTransmittedAt: Date | null;
+        lastTransmittedByName: string | null;
         orders: Array<{
           id: string;
           mikroOrderNumber: string;
@@ -519,7 +724,7 @@ class OrderTrackingService {
           deliveryDate: Date | null;
           itemCount: number;
           grandTotal: number;
-          items: any;
+          items: PendingOrderItem[];
         }>;
       }
     >();
@@ -529,11 +734,16 @@ class OrderTrackingService {
         summary.set(order.customerCode, {
           customerCode: order.customerCode,
           customerName: order.customerName,
-          customerEmail: order.customerEmail,
-          sectorCode: order.sectorCode,
+          customerEmail: order.customerEmail || null,
+          sectorCode: order.sectorCode || null,
+          city: cityBySupplierCode.get(String(order.customerCode || '').trim()) || null,
           ordersCount: 0,
           totalAmount: 0,
-          emailSent: order.emailSent,
+          emailSent: false,
+          lastTransmittedAt:
+            transmissionBySupplierCode.get(String(order.customerCode || '').trim())?.transmittedAt || null,
+          lastTransmittedByName:
+            transmissionBySupplierCode.get(String(order.customerCode || '').trim())?.transmittedByName || null,
           orders: [],
         });
       }
@@ -542,7 +752,7 @@ class OrderTrackingService {
       customerSummary.ordersCount++;
       customerSummary.totalAmount += order.grandTotal;
       customerSummary.orders.push({
-        id: order.id,
+        id: order.mikroOrderNumber,
         mikroOrderNumber: order.mikroOrderNumber,
         orderDate: order.orderDate,
         deliveryDate: order.deliveryDate,
@@ -553,6 +763,47 @@ class OrderTrackingService {
     }
 
     return Array.from(summary.values()).sort((a, b) => b.totalAmount - a.totalAmount);
+  }
+
+  async markSupplierTransmitted(params: {
+    customerCode: string;
+    customerName?: string;
+    transmittedByUserId?: string;
+  }) {
+    const customerCode = String(params.customerCode || '').trim();
+    if (!customerCode) {
+      throw new Error('Supplier code is required');
+    }
+
+    const customerName = params.customerName ? String(params.customerName).trim() : null;
+    const transmittedByUserId = params.transmittedByUserId
+      ? String(params.transmittedByUserId).trim()
+      : null;
+
+    let transmittedByName: string | null = null;
+    if (transmittedByUserId) {
+      const user = await prisma.user.findUnique({
+        where: { id: transmittedByUserId },
+        select: { name: true },
+      });
+      transmittedByName = user?.name ? String(user.name).trim() : null;
+    }
+
+    const log = await prisma.supplierTransmissionLog.create({
+      data: {
+        customerCode,
+        customerName,
+        transmittedByUserId,
+        transmittedByName,
+      },
+      select: {
+        customerCode: true,
+        transmittedAt: true,
+        transmittedByName: true,
+      },
+    });
+
+    return log;
   }
 }
 

@@ -9,12 +9,14 @@ import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Badge } from '@/components/ui/Badge';
-import { LogoLink } from '@/components/ui/Logo';
 import { formatDateShort, formatCurrency } from '@/lib/utils/format';
 import { CUSTOMER_TYPES, getCustomerTypeName } from '@/lib/utils/customerTypes';
+import { buildSearchTokens, matchesSearchTokens, normalizeSearchText } from '@/lib/utils/search';
 import { CariSelectModal } from '@/components/admin/CariSelectModal';
 import { CustomerEditModal } from '@/components/admin/CustomerEditModal';
 import { BulkCreateUsersModal } from '@/components/admin/BulkCreateUsersModal';
+import { useAuthStore } from '@/lib/store/authStore';
+import { usePermissions } from '@/hooks/usePermissions';
 
 interface MikroCari {
   code: string;
@@ -26,12 +28,31 @@ interface MikroCari {
   groupCode?: string;
   sectorCode?: string;
   paymentTerm?: number;
+  paymentPlanNo?: number | null;
+  paymentPlanCode?: string | null;
+  paymentPlanName?: string | null;
   hasEInvoice: boolean;
   balance: number;
 }
 
+const getPaymentPlanLabel = (cari: {
+  paymentPlanCode?: string | null;
+  paymentPlanName?: string | null;
+  paymentTerm?: number | null;
+}) => {
+  if (cari.paymentPlanName || cari.paymentPlanCode) {
+    return [cari.paymentPlanCode, cari.paymentPlanName].filter(Boolean).join(' - ');
+  }
+  if (cari.paymentTerm !== undefined && cari.paymentTerm !== null) {
+    return `${cari.paymentTerm} gun`;
+  }
+  return '-';
+};
+
 export default function CustomersPage() {
   const router = useRouter();
+  const { user, loadUserFromStorage } = useAuthStore();
+  const { hasPermission, loading: permissionsLoading } = usePermissions();
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [cariList, setCariList] = useState<MikroCari[]>([]);
   const [showForm, setShowForm] = useState(false);
@@ -49,12 +70,24 @@ export default function CustomersPage() {
     name: '',
     customerType: 'PERAKENDE',
     mikroCariCode: '',
+    priceVisibility: 'INVOICED_ONLY',
   });
 
   useEffect(() => {
+    loadUserFromStorage();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (user === null || permissionsLoading) return;
+    if (!hasPermission('admin:customers')) {
+      router.push('/dashboard');
+      return;
+    }
+
     fetchCustomers();
     fetchCariList();
-  }, []);
+  }, [user, permissionsLoading, router, hasPermission]);
 
   const fetchCustomers = async () => {
     try {
@@ -95,29 +128,38 @@ export default function CustomersPage() {
     }
 
     // Filter by search term
-    if (searchTerm) {
-      const lowerSearch = searchTerm.toLowerCase();
-      filtered = filtered.filter(
-        c =>
-          c.name.toLowerCase().includes(lowerSearch) ||
-          c.email.toLowerCase().includes(lowerSearch) ||
-          c.mikroCariCode.toLowerCase().includes(lowerSearch) ||
-          c.city?.toLowerCase().includes(lowerSearch) ||
-          c.district?.toLowerCase().includes(lowerSearch) ||
-          c.phone?.toLowerCase().includes(lowerSearch)
-      );
+    const tokens = buildSearchTokens(searchTerm);
+    if (tokens.length > 0) {
+      filtered = filtered.filter((c) => {
+        const haystack = normalizeSearchText([
+          c.name,
+          c.email,
+          c.mikroCariCode,
+          c.city,
+          c.district,
+          c.phone,
+        ].filter(Boolean).join(' '));
+        return matchesSearchTokens(haystack, tokens);
+      });
     }
 
     return filtered;
   }, [customers, searchTerm, filterActive]);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    try {
-      await adminApi.createCustomer(formData);
+    const handleSubmit = async (e: React.FormEvent) => {
+      e.preventDefault();
+      try {
+        await adminApi.createCustomer({ ...formData, email: formData.email.trim() });
       toast.success('Müşteri başarıyla oluşturuldu! ✅');
       setShowForm(false);
-      setFormData({ email: '', password: '', name: '', customerType: 'PERAKENDE', mikroCariCode: '' });
+      setFormData({
+        email: '',
+        password: '',
+        name: '',
+        customerType: 'PERAKENDE',
+        mikroCariCode: '',
+        priceVisibility: 'INVOICED_ONLY',
+      });
       setSelectedCari(null);
       fetchCustomers();
     } catch (error: any) {
@@ -131,6 +173,11 @@ export default function CustomersPage() {
     active?: boolean;
     invoicedPriceListNo?: number | null;
     whitePriceListNo?: number | null;
+    priceVisibility?: 'INVOICED_ONLY' | 'WHITE_ONLY' | 'BOTH';
+    useLastPrices?: boolean;
+    lastPriceGuardType?: 'COST' | 'PRICE_LIST';
+    lastPriceCostBasis?: 'CURRENT_COST' | 'LAST_ENTRY';
+    lastPriceMinCostPercent?: number;
   }) => {
     try {
       await adminApi.updateCustomer(customerId, data);
@@ -147,60 +194,54 @@ export default function CustomersPage() {
     setShowEditModal(true);
   };
 
+  const canOpenCustomer = hasPermission('admin:customers');
+  const canEditCustomer = hasPermission('admin:customers');
+  const canBulkCreate = hasPermission('admin:staff');
+
   if (isLoading) {
     return <div className="flex justify-center p-12"><div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600"></div></div>;
   }
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <header className="bg-gradient-to-r from-primary-700 to-primary-600 shadow-lg">
-        <div className="container-custom py-4">
-          <div className="flex justify-between items-center">
-            <div className="flex items-center gap-6">
-              <LogoLink href="/dashboard" variant="light" />
-              <div>
-                <h1 className="text-xl font-bold text-white">👥 Müşteri Yönetimi</h1>
-                <p className="text-sm text-primary-100">Müşteri hesapları ve bilgileri</p>
-              </div>
-            </div>
-            <div className="flex gap-3">
-              <Button
-                variant="secondary"
-                onClick={() => setShowBulkCreateModal(true)}
-                className="bg-green-600 text-white hover:bg-green-700"
-              >
-                👥 Toplu Kullanıcı Oluştur
-              </Button>
-              <Button
-                variant="secondary"
-                onClick={() => {
-                  if (showForm) {
-                    // Closing form - reset everything
-                    setShowForm(false);
-                    setFormData({ email: '', password: '', name: '', customerType: 'PERAKENDE', mikroCariCode: '' });
-                    setSelectedCari(null);
-                  } else {
-                    // Opening form
-                    setShowForm(true);
-                  }
-                }}
-                className="bg-white text-primary-700 hover:bg-primary-50"
-              >
-                {showForm ? 'İptal' : '+ Yeni Müşteri'}
-              </Button>
-              <Button
-                variant="secondary"
-                onClick={() => router.push('/dashboard')}
-                className="bg-white text-primary-700 hover:bg-primary-50"
-              >
-                ← Dashboard
-              </Button>
-            </div>
-          </div>
-        </div>
-      </header>
 
       <div className="container-custom py-8">
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900">Musteri Yonetimi</h1>
+            <p className="text-sm text-gray-600">Musteri hesaplari ve bilgileri</p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {canBulkCreate && (
+              <Button variant="secondary" onClick={() => setShowBulkCreateModal(true)}>
+                Toplu Kullanici Olustur
+              </Button>
+            )}
+            <Button
+              variant="secondary"
+              onClick={() => {
+                if (showForm) {
+                  // Closing form - reset everything
+                  setShowForm(false);
+                  setFormData({
+                    email: '',
+                    password: '',
+                    name: '',
+                    customerType: 'PERAKENDE',
+                    mikroCariCode: '',
+                    priceVisibility: 'INVOICED_ONLY',
+                  });
+                  setSelectedCari(null);
+                } else {
+                  // Opening form
+                  setShowForm(true);
+                }
+              }}
+            >
+              {showForm ? 'Iptal' : '+ Yeni Musteri'}
+            </Button>
+          </div>
+        </div>
         {showForm && (
           <Card title="Yeni Müşteri Ekle" className="mb-6">
             <form onSubmit={handleSubmit} className="space-y-4">
@@ -217,7 +258,7 @@ export default function CustomersPage() {
                 <p className="text-xs text-gray-500 mt-1">Mikro ERP'den cari seçmek için tıklayın</p>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <Input
                   label="Ad Soyad"
                   value={formData.name}
@@ -242,9 +283,25 @@ export default function CustomersPage() {
                 </div>
               </div>
 
+              <div>
+                <label className="block text-sm font-medium mb-1">Fiyat Gorunurlugu</label>
+                <select
+                  className="input"
+                  value={formData.priceVisibility || 'INVOICED_ONLY'}
+                  onChange={(e) => setFormData({ ...formData, priceVisibility: e.target.value as any })}
+                >
+                  <option value="INVOICED_ONLY">Sadece faturali</option>
+                  <option value="WHITE_ONLY">Sadece beyaz</option>
+                  <option value="BOTH">Faturali + beyaz</option>
+                </select>
+                <p className="text-xs text-gray-500 mt-1">
+                  Musterinin gorebilecegi fiyat tiplerini belirler.
+                </p>
+              </div>
+
               <div className="border-t pt-4">
                 <h3 className="text-sm font-semibold text-gray-700 mb-3">📋 Mikro ERP Bilgileri (Otomatik Doldurulur)</h3>
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <Input
                     label="Şehir"
                     value={selectedCari?.city || ''}
@@ -286,8 +343,8 @@ export default function CustomersPage() {
                   />
 
                   <Input
-                    label="Vade Günü"
-                    value={selectedCari?.paymentTerm ? `${selectedCari.paymentTerm} gün` : ''}
+                    label="Vade Planı"
+                    value={selectedCari ? getPaymentPlanLabel(selectedCari) : ''}
                     readOnly
                     disabled={!selectedCari}
                     placeholder="Cari seçilince dolar"
@@ -321,15 +378,15 @@ export default function CustomersPage() {
 
               <div className="border-t pt-4">
                 <h3 className="text-sm font-semibold text-gray-700 mb-3">🔐 Hesap Bilgileri</h3>
-                <div className="grid grid-cols-2 gap-4">
-                  <Input
-                    label="Email"
-                    type="email"
-                    value={formData.email}
-                    onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                    required
-                    placeholder="ornek@email.com"
-                  />
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <Input
+                      label="Kullanici Adi / E-posta"
+                      type="text"
+                      value={formData.email}
+                      onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                      required
+                      placeholder="ornek@firma.com veya 120.01.0001"
+                    />
                   <Input
                     label="Şifre"
                     type="password"
@@ -360,11 +417,11 @@ export default function CustomersPage() {
           <div className="space-y-4 mb-4">
             <div className="flex flex-col sm:flex-row gap-3">
               <div className="flex-1">
-                <Input
-                  placeholder="Ad, email, cari kodu, şehir, ilçe veya telefon ile ara..."
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                />
+                  <Input
+                    placeholder="Ad, kullanici adi, cari kodu, sehir, ilce veya telefon ile ara..."
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                  />
               </div>
               <div className="flex gap-2">
                 <Button
@@ -397,7 +454,7 @@ export default function CustomersPage() {
               <thead className="bg-gray-50 border-b">
                 <tr className="text-left text-sm text-gray-600">
                   <th className="px-4 py-3 font-medium">Ad</th>
-                  <th className="px-4 py-3 font-medium">Email</th>
+                    <th className="px-4 py-3 font-medium">Kullanici</th>
                   <th className="px-4 py-3 font-medium">Tip</th>
                   <th className="px-4 py-3 font-medium">Mikro Cari</th>
                   <th className="px-4 py-3 font-medium">Şehir</th>
@@ -405,7 +462,7 @@ export default function CustomersPage() {
                   <th className="px-4 py-3 font-medium">Telefon</th>
                   <th className="px-4 py-3 font-medium">Grup Kodu</th>
                   <th className="px-4 py-3 font-medium">Sektör Kodu</th>
-                  <th className="px-4 py-3 font-medium">Vade Günü</th>
+                  <th className="px-4 py-3 font-medium">Vade Planı</th>
                   <th className="px-4 py-3 font-medium">E-Fatura</th>
                   <th className="px-4 py-3 font-medium">Bakiye</th>
                   <th className="px-4 py-3 font-medium">Durum</th>
@@ -434,7 +491,7 @@ export default function CustomersPage() {
                       <td className="px-4 py-3 font-mono text-xs">{customer.phone || '-'}</td>
                       <td className="px-4 py-3 text-gray-600">{customer.groupCode || '-'}</td>
                       <td className="px-4 py-3 text-gray-600">{customer.sectorCode || '-'}</td>
-                      <td className="px-4 py-3 text-center">{customer.paymentTerm || '-'}</td>
+                      <td className="px-4 py-3 text-center">{getPaymentPlanLabel(customer)}</td>
                       <td className="px-4 py-3">
                         <Badge variant={customer.hasEInvoice ? 'success' : 'default'}>
                           {customer.hasEInvoice ? 'Evet' : 'Hayır'}
@@ -454,13 +511,17 @@ export default function CustomersPage() {
                       </td>
                       <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{formatDateShort(customer.createdAt)}</td>
                       <td className="px-4 py-3 text-center">
-                        <Button
-                          size="sm"
-                          variant="secondary"
-                          onClick={() => openEditModal(customer)}
-                        >
-                          ✏️ Düzenle
-                        </Button>
+                        {canOpenCustomer ? (
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            onClick={() => openEditModal(customer)}
+                          >
+                            {canEditCustomer ? '✏️ Düzenle' : '👤 Kişiler'}
+                          </Button>
+                        ) : (
+                          <span className="text-xs text-gray-400">Yetki yok</span>
+                        )}
                       </td>
                     </tr>
                   ))
@@ -475,6 +536,7 @@ export default function CustomersPage() {
           onClose={() => setShowEditModal(false)}
           customer={customerToEdit}
           onSave={handleEditCustomer}
+          canEditFields={canEditCustomer}
         />
 
         <BulkCreateUsersModal
