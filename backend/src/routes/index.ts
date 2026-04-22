@@ -15,6 +15,7 @@ import searchRoutes from './search.routes';
 import cariHareketRoutes from './cari-hareket.routes';
 import rolePermissionRoutes from './role-permission.routes';
 import vadeRoutes from './vade.routes';
+import tenantRoutes from './tenant.routes';
 
 const router = Router();
 
@@ -29,6 +30,7 @@ router.get('/health', (_req, res) => {
 
 // Routes
 router.use('/auth', authRoutes);
+router.use('/tenant', tenantRoutes);
 router.use('/admin', adminRoutes);
 router.use('/admin/reports', reportsRoutes);
 router.use('/admin/vade', vadeRoutes);

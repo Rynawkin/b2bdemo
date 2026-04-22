@@ -28,6 +28,8 @@ import { useMemo, useState, type ReactNode } from 'react';
 import { usePermissions } from '@/hooks/usePermissions';
 import { cn } from '@/lib/utils/cn';
 import { buildSearchTokens, matchesSearchTokens, normalizeSearchText } from '@/lib/utils/search';
+import { useTenant } from '@/components/TenantProvider';
+import type { TenantFeatureFlags } from '@/lib/tenant/types';
 
 type ReportCategory = 'cost' | 'stock' | 'customer' | 'order';
 
@@ -42,6 +44,7 @@ interface ReportCard {
   tags: string[];
   highImpact?: boolean;
   permission?: string | string[];
+  feature?: keyof TenantFeatureFlags;
 }
 
 const reports: ReportCard[] = [
@@ -89,6 +92,7 @@ const reports: ReportCard[] = [
     tags: ['Karar Destek', 'Depo'],
     highImpact: true,
     permission: 'reports:ucarer-depo',
+    feature: 'ucarerReports',
   },
   {
     id: 'ucarer-minmax',
@@ -100,6 +104,7 @@ const reports: ReportCard[] = [
     badge: 'Yeni',
     tags: ['Planlama', 'MinMax'],
     permission: 'reports:ucarer-minmax',
+    feature: 'ucarerReports',
   },
   {
     id: 'ucarer-minmax-exclusions',
@@ -111,6 +116,7 @@ const reports: ReportCard[] = [
     badge: 'Yeni',
     tags: ['Kontrol', 'Haric Liste'],
     permission: 'reports:ucarer-depo',
+    feature: 'ucarerReports',
   },
   {
     id: 'product-families',
@@ -122,6 +128,7 @@ const reports: ReportCard[] = [
     badge: 'Yeni',
     tags: ['Urun Yapisi', 'Stok'],
     permission: 'reports:ucarer-depo',
+    feature: 'ucarerReports',
   },
   {
     id: 'top-products',
@@ -221,6 +228,7 @@ const reports: ReportCard[] = [
     tags: ['Tedarik', 'Karsilastirma'],
     highImpact: true,
     permission: 'reports:supplier-price-lists',
+    feature: 'supplierPriceLists',
   },
 ];
 
@@ -270,10 +278,12 @@ const badgeStyles: Record<string, string> = {
 
 export default function ReportsPage() {
   const { hasPermission, loading: permissionsLoading } = usePermissions();
+  const { tenant } = useTenant();
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<'all' | ReportCategory>('all');
 
-  const canAccessReport = (permission?: string | string[]) => {
+  const canAccessReport = (permission?: string | string[], feature?: keyof TenantFeatureFlags) => {
+    if (feature && !tenant.features[feature]) return false;
     if (!permission) return true;
     if (permissionsLoading) return true;
     if (Array.isArray(permission)) {
@@ -283,8 +293,8 @@ export default function ReportsPage() {
   };
 
   const visibleReports = useMemo(
-    () => reports.filter((report) => canAccessReport(report.permission)),
-    [hasPermission, permissionsLoading]
+    () => reports.filter((report) => canAccessReport(report.permission, report.feature)),
+    [hasPermission, permissionsLoading, tenant.features]
   );
 
   const categoryCounts = useMemo(

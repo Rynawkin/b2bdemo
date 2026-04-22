@@ -1,6 +1,6 @@
-import { PrismaClient, UserRole } from '@prisma/client';
-
-const prisma = new PrismaClient();
+import { UserRole } from '@prisma/client';
+import { prisma } from '../utils/prisma';
+import { exactTenantScope, tenantScopedOrNull } from '../tenant/scope';
 
 // Tanımlı izinler - dashboard widget'ları ve rapor sayfaları
 export const AVAILABLE_PERMISSIONS = {
@@ -110,16 +110,19 @@ export type PermissionKey = keyof typeof AVAILABLE_PERMISSIONS;
 
 interface GetRolePermissionsParams {
   role: UserRole;
+  tenantId?: string;
 }
 
 interface SetRolePermissionParams {
   role: UserRole;
   permission: string;
   enabled: boolean;
+  tenantId?: string;
 }
 
 interface InitializeDefaultPermissionsParams {
   role: UserRole;
+  tenantId?: string;
 }
 
 class RolePermissionService {
@@ -127,10 +130,13 @@ class RolePermissionService {
    * Belirli bir rol için tüm izinleri getir
    */
   async getRolePermissions(params: GetRolePermissionsParams) {
-    const { role } = params;
+    const { role, tenantId } = params;
 
     const permissions = await prisma.rolePermission.findMany({
-      where: { role },
+      where: {
+        role,
+        ...tenantScopedOrNull(tenantId),
+      },
       orderBy: { permission: 'asc' }
     });
 
@@ -138,7 +144,9 @@ class RolePermissionService {
     const allPermissions: Record<string, boolean> = {};
 
     Object.keys(AVAILABLE_PERMISSIONS).forEach(key => {
-      const existing = permissions.find(p => p.permission === key);
+      const existing =
+        permissions.find((permissionRecord) => permissionRecord.permission === key && permissionRecord.tenantId === tenantId) ||
+        permissions.find((permissionRecord) => permissionRecord.permission === key && permissionRecord.tenantId === null);
       allPermissions[key] = existing ? existing.enabled : this.getDefaultPermission(role, key);
     });
 
@@ -149,7 +157,7 @@ class RolePermissionService {
    * Bir izni açma/kapatma
    */
   async setRolePermission(params: SetRolePermissionParams) {
-    const { role, permission, enabled } = params;
+    const { role, permission, enabled, tenantId } = params;
 
     // İzin mevcut izinler arasında mı kontrol et
     if (!Object.keys(AVAILABLE_PERMISSIONS).includes(permission)) {
@@ -157,19 +165,27 @@ class RolePermissionService {
     }
 
     // Upsert - varsa güncelle, yoksa oluştur
-    const result = await prisma.rolePermission.upsert({
+    const existing = await prisma.rolePermission.findFirst({
       where: {
-        role_permission: { role, permission }
-      },
-      update: {
-        enabled
-      },
-      create: {
         role,
         permission,
-        enabled
+        ...exactTenantScope(tenantId),
       }
     });
+
+    const result = existing
+      ? await prisma.rolePermission.update({
+          where: { id: existing.id },
+          data: { enabled }
+        })
+      : await prisma.rolePermission.create({
+          data: {
+            tenantId,
+            role,
+            permission,
+            enabled
+          }
+        });
 
     return result;
   }
@@ -178,15 +194,19 @@ class RolePermissionService {
    * Bir rol için tüm izinleri varsayılan değerlere sıfırla
    */
   async initializeDefaultPermissions(params: InitializeDefaultPermissionsParams) {
-    const { role } = params;
+    const { role, tenantId } = params;
 
     // Mevcut izinleri sil
     await prisma.rolePermission.deleteMany({
-      where: { role }
+      where: {
+        role,
+        ...exactTenantScope(tenantId)
+      }
     });
 
     // Varsayılan izinleri oluştur
     const defaultPermissions = Object.keys(AVAILABLE_PERMISSIONS).map(permission => ({
+      tenantId,
       role,
       permission,
       enabled: this.getDefaultPermission(role, permission)
@@ -202,13 +222,13 @@ class RolePermissionService {
   /**
    * Tüm roller için izinleri getir (HEAD_ADMIN için)
    */
-  async getAllRolePermissions() {
+  async getAllRolePermissions(tenantId?: string) {
     const roles: UserRole[] = ['ADMIN', 'MANAGER', 'SALES_REP', 'CUSTOMER', 'DIVERSEY', 'DEPOCU'];
 
     const result: Record<string, Record<string, boolean>> = {};
 
     for (const role of roles) {
-      result[role] = await this.getRolePermissions({ role });
+      result[role] = await this.getRolePermissions({ role, tenantId });
     }
 
     return result;
@@ -295,10 +315,16 @@ class RolePermissionService {
   /**
    * Kullanıcının bir izni var mı kontrol et
    */
-  async hasPermission(userId: string, permission: string): Promise<boolean> {
-    const user = await prisma.user.findUnique({
-      where: { id: userId },
-      select: { role: true }
+  async hasPermission(userId: string, permission: string, tenantId?: string): Promise<boolean> {
+    const user = await prisma.user.findFirst({
+      where: {
+        id: userId,
+        ...tenantScopedOrNull(tenantId),
+      },
+      select: {
+        role: true,
+        tenantId: true,
+      }
     });
 
     if (!user) return false;
@@ -307,13 +333,15 @@ class RolePermissionService {
     if (user.role === 'HEAD_ADMIN') return true;
 
     // İzin kaydını getir
-    const rolePermission = await prisma.rolePermission.findUnique({
+    const rolePermission = await prisma.rolePermission.findFirst({
       where: {
-        role_permission: {
-          role: user.role,
-          permission
-        }
-      }
+        role: user.role,
+        permission,
+        ...tenantScopedOrNull(tenantId || user.tenantId || undefined),
+      },
+      orderBy: {
+        tenantId: 'desc',
+      },
     });
 
     // Kayıt varsa ona göre, yoksa varsayılan değere göre

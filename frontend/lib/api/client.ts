@@ -4,6 +4,7 @@
 
 import axios from 'axios';
 import { getOrCreateSessionId } from '@/lib/analytics/session';
+import { getTenantRequestHeaders } from '@/lib/tenant/resolveTenant';
 
 // Use relative URL to leverage Next.js rewrites (avoids CORS and Mixed Content issues)
 const API_URL = '/api';
@@ -19,6 +20,10 @@ export const apiClient = axios.create({
 apiClient.interceptors.request.use(
   (config) => {
     if (typeof window !== 'undefined') {
+      Object.entries(getTenantRequestHeaders()).forEach(([key, value]) => {
+        config.headers[key] = value;
+      });
+
       // LocalStorage'dan token al
       const authStorage = localStorage.getItem('b2b-auth');
       if (authStorage) {

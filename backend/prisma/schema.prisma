@@ -242,10 +242,26 @@ enum SupplierPriceListStatus {
   FAILED
 }
 
+// ==================== TENANTS ====================
+
+model Tenant {
+  id           String   @id @default(uuid())
+  slug         String   @unique
+  name         String
+  status       String   @default("active")
+  domains      String[] @default([])
+  branding     Json?
+  features     Json?
+  integrations Json?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
 // ==================== USERS ====================
 
 model User {
   id            String        @id @default(uuid())
+  tenantId      String?
   email         String?       @unique // Optional: Cari kodu ile de login olunabilir
   password      String        // bcrypt hash
   name          String        // DEPRECATED: Use displayName or mikroName
@@ -347,6 +363,7 @@ model User {
   @@index([role])
   @@index([mikroCariCode])
   @@index([sectorCode])
+  @@index([tenantId])
 }
 
 // ==================== USER PREFERENCES ====================
@@ -354,6 +371,7 @@ model User {
 // Kullanıcıların stok ve cari arama sayfaları için kolon tercihleri
 model UserSearchPreferences {
   id                    String    @id @default(uuid())
+  tenantId              String?
 
   userId                String    @unique
   user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -370,12 +388,14 @@ model UserSearchPreferences {
   updatedAt             DateTime  @updatedAt
 
   @@index([userId])
+  @@index([tenantId])
 }
 
 // ==================== CUSTOMER ACTIVITY ====================
 
 model CustomerActivityEvent {
   id             String               @id @default(uuid())
+  tenantId       String?
   type           CustomerActivityType
   userId         String
   user           User                 @relation("CustomerActivityUser", fields: [userId], references: [id], onDelete: Cascade)
@@ -403,6 +423,7 @@ model CustomerActivityEvent {
   @@index([productId])
   @@index([pagePath])
   @@index([sessionId])
+  @@index([tenantId])
 }
 
 // ==================== ROLE PERMISSIONS ====================
@@ -410,6 +431,7 @@ model CustomerActivityEvent {
 // HEAD_ADMIN tarafından yönetilen rol bazlı izinler
 model RolePermission {
   id          String    @id @default(uuid())
+  tenantId    String?
 
   role        UserRole  // Hangi rol için geçerli
   permission  String    // İzin kodu (örn: "dashboard:orders", "dashboard:ekstre", "reports:margin")
@@ -418,15 +440,17 @@ model RolePermission {
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
-  @@unique([role, permission])
+  @@unique([tenantId, role, permission])
   @@index([role])
   @@index([enabled])
+  @@index([tenantId])
 }
 
 // ==================== SETTINGS ====================
 
 model Settings {
   id                        String                  @id @default(uuid())
+  tenantId                  String?
 
   // Fazla stok hesaplama ayarları
   calculationPeriodMonths   Int                     @default(3)  // 1, 3, veya 6 ay (DEPRECATED - use calculationPeriodDays)
@@ -459,12 +483,14 @@ model Settings {
 
   createdAt                 DateTime                @default(now())
   updatedAt                 DateTime                @updatedAt
+  @@index([tenantId])
 }
 
 // ==================== VADE TRACKING ====================
 
 model VadeBalance {
   id                String             @id @default(uuid())
+  tenantId          String?
   userId            String             @unique
   user              User               @relation(fields: [userId], references: [id], onDelete: Cascade)
   pastDueBalance    Float              @default(0)
@@ -481,10 +507,12 @@ model VadeBalance {
 
   @@index([pastDueDate])
   @@index([notDueDate])
+  @@index([tenantId])
 }
 
 model VadeNote {
   id                String   @id @default(uuid())
+  tenantId          String?
   customerId        String
   customer          User     @relation("VadeNoteCustomer", fields: [customerId], references: [id], onDelete: Cascade)
   authorId          String?
@@ -504,10 +532,12 @@ model VadeNote {
   @@index([authorId])
   @@index([reminderDate])
   @@index([reminderCompleted])
+  @@index([tenantId])
 }
 
 model VadeClassification {
   id                   String   @id @default(uuid())
+  tenantId             String?
   customerId           String   @unique
   customer             User     @relation(fields: [customerId], references: [id], onDelete: Cascade)
   classification       String
@@ -521,10 +551,12 @@ model VadeClassification {
   updatedAt            DateTime @updatedAt
 
   @@index([customerId])
+  @@index([tenantId])
 }
 
 model VadeAssignment {
   id           String   @id @default(uuid())
+  tenantId     String?
   staffId      String
   staff        User     @relation("VadeAssignmentStaff", fields: [staffId], references: [id], onDelete: Cascade)
   customerId   String
@@ -537,10 +569,12 @@ model VadeAssignment {
   @@unique([staffId, customerId])
   @@index([staffId])
   @@index([customerId])
+  @@index([tenantId])
 }
 
 model VadeSyncLog {
   id             String          @id @default(uuid())
+  tenantId       String?
   source         VadeBalanceSource
   status         VadeSyncStatus
   recordsTotal   Int             @default(0)
@@ -554,12 +588,14 @@ model VadeSyncLog {
   @@index([source])
   @@index([status])
   @@index([startedAt])
+  @@index([tenantId])
 }
 
 // ==================== E-INVOICE DOCUMENTS ====================
 
 model EInvoiceDocument {
   id            String              @id @default(uuid())
+  tenantId      String?
   invoiceNo     String              @unique
   evrakSeri     String?
   evrakSira     Int?
@@ -594,12 +630,14 @@ model EInvoiceDocument {
   @@index([issueDate])
   @@index([sentAt])
   @@index([matchStatus])
+  @@index([tenantId])
 }
 
 // ==================== CATEGORIES ====================
 
 model Category {
   id              String                @id @default(uuid())
+  tenantId        String?
   mikroCode       String                @unique
   name            String
 
@@ -611,12 +649,14 @@ model Category {
   products        Product[]
   priceRules      CategoryPriceRule[]
   priceListRules  CustomerPriceListRule[]
+  @@index([tenantId])
 }
 
 // ==================== PRODUCTS ====================
 
 model Product {
   id                      String    @id @default(uuid())
+  tenantId                String?
   mikroCode               String    @unique
   name                    String
   foreignName             String?   // Tedarikci urun kodu (Mikro: sto_yabanci_isim)
@@ -702,6 +742,7 @@ model Product {
   @@index([foreignName])
   @@index([excessStock])
   @@index([categoryId])
+  @@index([tenantId])
   @@index([imageSyncStatus])
   @@index([imageSyncErrorType])
   @@index([imageSyncUpdatedAt])
@@ -709,6 +750,7 @@ model Product {
 
 model ProductComplementAuto {
   id              String   @id @default(uuid())
+  tenantId        String?
   productId       String
   product         Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
   relatedProductId String
@@ -721,11 +763,13 @@ model ProductComplementAuto {
   updatedAt       DateTime @updatedAt
 
   @@unique([productId, relatedProductId])
+  @@index([tenantId])
   @@index([productId, rank])
 }
 
 model ProductComplementManual {
   id              String   @id @default(uuid())
+  tenantId        String?
   productId       String
   product         Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
   relatedProductId String
@@ -735,6 +779,7 @@ model ProductComplementManual {
   updatedAt       DateTime @updatedAt
 
   @@unique([productId, relatedProductId])
+  @@index([tenantId])
   @@index([productId, sortOrder])
 }
 
@@ -742,6 +787,7 @@ model ProductComplementManual {
 
 model Supplier {
   id                String    @id @default(uuid())
+  tenantId          String?
   name              String    @unique
   active            Boolean   @default(true)
   discount1         Float?
@@ -765,10 +811,12 @@ model Supplier {
   updatedAt         DateTime  @updatedAt
 
   priceListUploads  SupplierPriceListUpload[]
+  @@index([tenantId])
 }
 
 model SupplierPriceListUpload {
   id              String    @id @default(uuid())
+  tenantId        String?
   supplierId      String
   supplier        Supplier  @relation(fields: [supplierId], references: [id], onDelete: Restrict)
   uploadedById    String
@@ -790,10 +838,12 @@ model SupplierPriceListUpload {
   @@index([supplierId])
   @@index([uploadedById])
   @@index([createdAt])
+  @@index([tenantId])
 }
 
 model SupplierPriceListFile {
   id           String   @id @default(uuid())
+  tenantId     String?
   uploadId     String
   upload       SupplierPriceListUpload @relation(fields: [uploadId], references: [id], onDelete: Cascade)
   fileName     String
@@ -804,10 +854,12 @@ model SupplierPriceListFile {
   createdAt    DateTime @default(now())
 
   @@index([uploadId])
+  @@index([tenantId])
 }
 
 model SupplierPriceListItem {
   id                 String   @id @default(uuid())
+  tenantId           String?
   uploadId           String
   upload             SupplierPriceListUpload @relation(fields: [uploadId], references: [id], onDelete: Cascade)
   supplierCode       String
@@ -825,10 +877,12 @@ model SupplierPriceListItem {
 
   @@index([uploadId])
   @@index([supplierCode])
+  @@index([tenantId])
 }
 
 model SupplierPriceListMatch {
   id             String   @id @default(uuid())
+  tenantId       String?
   itemId         String
   item           SupplierPriceListItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
   productId      String
@@ -844,6 +898,7 @@ model SupplierPriceListMatch {
 
   @@index([itemId])
   @@index([productId])
+  @@index([tenantId])
 }
 
 // ==================== PRICE RULES ====================
@@ -851,6 +906,7 @@ model SupplierPriceListMatch {
 // Kategori bazlı kar marjları
 model CategoryPriceRule {
   id              String        @id @default(uuid())
+  tenantId        String?
 
   categoryId      String
   category        Category      @relation(fields: [categoryId], references: [id], onDelete: Cascade)
@@ -862,11 +918,13 @@ model CategoryPriceRule {
   updatedAt       DateTime      @updatedAt
 
   @@unique([categoryId, customerType])
+  @@index([tenantId])
 }
 
 // Ürün bazlı özel kar marjı (override)
 model ProductPriceOverride {
   id              String        @id @default(uuid())
+  tenantId        String?
 
   productId       String
   product         Product       @relation(fields: [productId], references: [id], onDelete: Cascade)
@@ -878,11 +936,13 @@ model ProductPriceOverride {
   updatedAt       DateTime      @updatedAt
 
   @@unique([productId, customerType])
+  @@index([tenantId])
 }
 
 // Musteri bazli fiyat listesi kurallari (marka/kategori)
 model CustomerPriceListRule {
   id                   String    @id @default(uuid())
+  tenantId             String?
   customerId           String
   customer             User      @relation(fields: [customerId], references: [id], onDelete: Cascade)
   brandCode            String?
@@ -897,12 +957,14 @@ model CustomerPriceListRule {
   @@index([customerId])
   @@index([brandCode])
   @@index([categoryId])
+  @@index([tenantId])
 }
 
 // ==================== CART ====================
 
 model Cart {
   id              String        @id @default(uuid())
+  tenantId        String?
 
   userId          String        @unique
   user            User          @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -911,10 +973,12 @@ model Cart {
 
   createdAt       DateTime      @default(now())
   updatedAt       DateTime      @updatedAt
+  @@index([tenantId])
 }
 
 model CartItem {
   id              String      @id @default(uuid())
+  tenantId        String?
 
   cartId          String
   cart            Cart        @relation(fields: [cartId], references: [id], onDelete: Cascade)
@@ -934,12 +998,14 @@ model CartItem {
   updatedAt       DateTime    @updatedAt
 
   @@index([cartId])
+  @@index([tenantId])
 }
 
 // ==================== ORDERS ====================
 
 model Order {
   id              String        @id @default(uuid())
+  tenantId        String?
   orderNumber     String        @unique  // "ORD-2024-00001"
 
   userId          String
@@ -977,10 +1043,12 @@ model Order {
   @@index([userId])
   @@index([status])
   @@index([orderNumber])
+  @@index([tenantId])
 }
 
 model OrderItem {
   id              String            @id @default(uuid())
+  tenantId        String?
 
   orderId         String
   order           Order             @relation(fields: [orderId], references: [id], onDelete: Cascade)
@@ -1011,12 +1079,14 @@ model OrderItem {
 
   @@index([orderId])
   @@index([status])
+  @@index([tenantId])
 }
 
 // ==================== CUSTOMER AGREEMENTS ====================
 
 model CustomerPriceAgreement {
   id           String   @id @default(uuid())
+  tenantId     String?
 
   customerId   String
   customer     User     @relation(fields: [customerId], references: [id], onDelete: Cascade)
@@ -1039,12 +1109,14 @@ model CustomerPriceAgreement {
   @@index([productId])
   @@index([validFrom])
   @@index([validTo])
+  @@index([tenantId])
 }
 
 // ==================== CUSTOMER REQUESTS ====================
 
 model CustomerRequest {
   id              String                 @id @default(uuid())
+  tenantId        String?
 
   parentCustomerId String
   parentCustomer  User                   @relation("CustomerRequestParent", fields: [parentCustomerId], references: [id])
@@ -1070,10 +1142,12 @@ model CustomerRequest {
   @@index([requestedById])
   @@index([status])
   @@index([orderId])
+  @@index([tenantId])
 }
 
 model CustomerRequestItem {
   id                String      @id @default(uuid())
+  tenantId          String?
 
   requestId         String
   request           CustomerRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
@@ -1096,12 +1170,14 @@ model CustomerRequestItem {
 
   @@index([requestId])
   @@index([productId])
+  @@index([tenantId])
 }
 
 // ==================== QUOTES ====================
 
 model Quote {
   id                String        @id @default(uuid())
+  tenantId          String?
   quoteNumber       String        @unique // "TEK-2025-00001"
 
   status            QuoteStatus   @default(PENDING_APPROVAL)
@@ -1153,10 +1229,12 @@ model Quote {
   @@index([createdById])
   @@index([status])
   @@index([mikroNumber])
+  @@index([tenantId])
 }
 
 model QuoteItem {
   id                String            @id @default(uuid())
+  tenantId          String?
 
   quoteId           String
   quote             Quote             @relation(fields: [quoteId], references: [id], onDelete: Cascade)
@@ -1207,10 +1285,12 @@ model QuoteItem {
   @@index([priceSource])
   @@index([status])
   @@index([statusUpdatedAt])
+  @@index([tenantId])
 }
 
 model QuoteHistory {
   id        String              @id @default(uuid())
+  tenantId  String?
   quoteId   String
   quote     Quote               @relation(fields: [quoteId], references: [id], onDelete: Cascade)
   action    QuoteHistoryAction
@@ -1222,10 +1302,12 @@ model QuoteHistory {
 
   @@index([quoteId])
   @@index([actorId])
+  @@index([tenantId])
 }
 
 model CustomerContact {
   id         String   @id @default(uuid())
+  tenantId   String?
   customerId String
   customer   User     @relation(fields: [customerId], references: [id], onDelete: Cascade)
 
@@ -1239,12 +1321,14 @@ model CustomerContact {
   updatedAt  DateTime @updatedAt
 
   @@index([customerId])
+  @@index([tenantId])
 }
 
 // ==================== SYNC LOGS ====================
 
 model SyncLog {
   id                    String      @id @default(uuid())
+  tenantId              String?
 
   syncType              String      // "AUTO" | "MANUAL"
   status                String      // "RUNNING" | "SUCCESS" | "FAILED" | "PARTIAL"
@@ -1267,6 +1351,7 @@ model SyncLog {
 
   @@index([syncType])
   @@index([status])
+  @@index([tenantId])
 }
 
 // ==================== MARGIN COMPLIANCE REPORT CACHE ====================
@@ -1313,6 +1398,7 @@ enum CampaignType {
 
 model Campaign {
   id                    String        @id @default(uuid())
+  tenantId              String?
   name                  String
   description           String?
 
@@ -1336,6 +1422,7 @@ model Campaign {
 
   @@index([active])
   @@index([startDate, endDate])
+  @@index([tenantId])
 }
 
 // ==================== ORDER TRACKING ====================
@@ -1343,6 +1430,7 @@ model Campaign {
 // Sipariş takip modülü ayarları
 model OrderTrackingSettings {
   id                    String    @id @default(uuid())
+  tenantId              String?
 
   // Sync ayarları
   syncEnabled           Boolean   @default(true)
@@ -1371,11 +1459,13 @@ model OrderTrackingSettings {
 
   createdAt             DateTime  @default(now())
   updatedAt             DateTime  @updatedAt
+  @@index([tenantId])
 }
 
 // Mikro'dan çekilen bekleyen siparişler (cache)
 model PendingMikroOrder {
   id                    String    @id @default(uuid())
+  tenantId              String?
 
   // Sipariş bilgileri
   mikroOrderNumber      String    @unique // "HENDEK-8162" - Her sipariş tek bir kayıt olmalı
@@ -1417,11 +1507,13 @@ model PendingMikroOrder {
   @@index([syncedAt])
   @@index([emailSent])
   @@index([sectorCode])
+  @@index([tenantId])
 }
 
 // Tedarikciye PDF/WhatsApp iletim isaretleri (manuel)
 model SupplierTransmissionLog {
   id                  String    @id @default(uuid())
+  tenantId            String?   @map("tenantid")
   customerCode        String    @map("customercode")
   customerName        String?   @map("customername")
   transmittedAt       DateTime  @default(now()) @map("transmittedat")
@@ -1431,11 +1523,13 @@ model SupplierTransmissionLog {
 
   @@index([customerCode], map: "suppliertransmissionlog_customercode_idx")
   @@index([transmittedAt], map: "suppliertransmissionlog_transmittedat_idx")
+  @@index([tenantId], map: "suppliertransmissionlog_tenantid_idx")
   @@map("suppliertransmissionlog")
 }
 
 model ProductFamily {
   id         String              @id @default(uuid())
+  tenantId   String?
   name       String
   code       String?             @unique
   note       String?
@@ -1445,10 +1539,12 @@ model ProductFamily {
   items      ProductFamilyItem[]
 
   @@index([active])
+  @@index([tenantId])
 }
 
 model ProductFamilyItem {
   id          String         @id @default(uuid())
+  tenantId    String?
   familyId    String
   family      ProductFamily  @relation(fields: [familyId], references: [id], onDelete: Cascade)
   productId   String?
@@ -1463,10 +1559,12 @@ model ProductFamilyItem {
   @@unique([familyId, productCode])
   @@index([productCode])
   @@index([familyId, priority])
+  @@index([tenantId])
 }
 
 model WarehouseOrderWorkflow {
   id                    String                  @id @default(uuid())
+  tenantId              String?
   mikroOrderNumber      String                  @unique
   orderSeries           String
   orderSequence         Int
@@ -1490,10 +1588,12 @@ model WarehouseOrderWorkflow {
   @@index([status])
   @@index([customerCode])
   @@index([mikroDeliveryNoteNo])
+  @@index([tenantId])
 }
 
 model WarehouseOrderWorkflowItem {
   id              String                      @id @default(uuid())
+  tenantId        String?
   workflowId      String
   workflow        WarehouseOrderWorkflow      @relation(fields: [workflowId], references: [id], onDelete: Cascade)
   lineKey         String
@@ -1519,10 +1619,12 @@ model WarehouseOrderWorkflowItem {
   @@unique([workflowId, lineKey])
   @@index([workflowId, status])
   @@index([productCode])
+  @@index([tenantId])
 }
 
 model WarehouseShelfLocation {
   id          String    @id @default(uuid())
+  tenantId    String?
   productCode String    @unique
   shelfCode   String
   note        String?
@@ -1531,10 +1633,12 @@ model WarehouseShelfLocation {
   updatedAt   DateTime  @updatedAt
 
   @@index([shelfCode])
+  @@index([tenantId])
 }
 
 model WarehouseDispatchDriver {
   id         String   @id @default(uuid())
+  tenantId   String?
   firstName  String
   lastName   String
   tcNo       String   @unique
@@ -1545,10 +1649,12 @@ model WarehouseDispatchDriver {
 
   @@index([active])
   @@index([lastName, firstName])
+  @@index([tenantId])
 }
 
 model WarehouseDispatchVehicle {
   id         String   @id @default(uuid())
+  tenantId   String?
   name       String
   plate      String   @unique
   active     Boolean  @default(true)
@@ -1558,10 +1664,12 @@ model WarehouseDispatchVehicle {
 
   @@index([active])
   @@index([name])
+  @@index([tenantId])
 }
 
 model WarehouseImageIssueReport {
   id                String                    @id @default(uuid())
+  tenantId          String?
   mikroOrderNumber  String
   orderSeries       String?
   customerCode      String?
@@ -1587,11 +1695,13 @@ model WarehouseImageIssueReport {
   @@index([productCode])
   @@index([status])
   @@index([createdAt])
+  @@index([tenantId])
 }
 
 // Email gönderim logları
 model EmailLog {
   id                    String    @id @default(uuid())
+  tenantId              String?
 
   // Alıcı bilgileri
   recipientEmail        String
@@ -1616,6 +1726,7 @@ model EmailLog {
   @@index([customerCode])
   @@index([sentAt])
   @@index([success])
+  @@index([tenantId])
 }
 
 // ==================== PRICE HISTORY ====================
@@ -1725,6 +1836,7 @@ enum ExclusionType {
 // Raporlardan hariç tutulacak ürün/müşteriler
 model ReportExclusion {
   id                    String          @id @default(uuid())
+  tenantId              String?
 
   type                  ExclusionType
   value                 String          // Hariç tutulacak değer (örn: "120.01.001" veya "ÇAMSAN")
@@ -1739,12 +1851,14 @@ model ReportExclusion {
   @@index([type])
   @@index([active])
   @@index([value])
+  @@index([tenantId])
 }
 
 // ==================== TASKS ====================
 
 model Task {
   id              String        @id @default(uuid())
+  tenantId        String?
   title           String
   description     String?
   type            TaskType
@@ -1781,10 +1895,12 @@ model Task {
   @@index([customerId])
   @@index([sectorCode])
   @@index([lastActivityAt])
+  @@index([tenantId])
 }
 
 model TaskComment {
   id          String          @id @default(uuid())
+  tenantId    String?
   taskId      String
   task        Task            @relation(fields: [taskId], references: [id], onDelete: Cascade)
   authorId    String
@@ -1795,10 +1911,12 @@ model TaskComment {
 
   @@index([taskId])
   @@index([authorId])
+  @@index([tenantId])
 }
 
 model TaskAttachment {
   id            String          @id @default(uuid())
+  tenantId      String?
   taskId        String
   task          Task            @relation(fields: [taskId], references: [id], onDelete: Cascade)
   uploadedById  String
@@ -1813,10 +1931,12 @@ model TaskAttachment {
 
   @@index([taskId])
   @@index([uploadedById])
+  @@index([tenantId])
 }
 
 model TaskLink {
   id            String        @id @default(uuid())
+  tenantId      String?
   taskId        String
   task          Task          @relation(fields: [taskId], references: [id], onDelete: Cascade)
   type          TaskLinkType
@@ -1828,10 +1948,12 @@ model TaskLink {
 
   @@index([taskId])
   @@index([type])
+  @@index([tenantId])
 }
 
 model TaskStatusHistory {
   id            String       @id @default(uuid())
+  tenantId      String?
   taskId        String
   task          Task         @relation(fields: [taskId], references: [id], onDelete: Cascade)
   fromStatus    TaskStatus?
@@ -1842,10 +1964,12 @@ model TaskStatusHistory {
 
   @@index([taskId])
   @@index([changedById])
+  @@index([tenantId])
 }
 
 model TaskTemplate {
   id            String        @id @default(uuid())
+  tenantId      String?
   title         String
   description   String?
   type          TaskType
@@ -1860,10 +1984,12 @@ model TaskTemplate {
 
   createdAt     DateTime      @default(now())
   updatedAt     DateTime      @updatedAt
+  @@index([tenantId])
 }
 
 model Notification {
   id        String   @id @default(uuid())
+  tenantId  String?
   userId    String
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   title     String
@@ -1874,6 +2000,7 @@ model Notification {
 
   @@index([userId, isRead])
   @@index([createdAt])
+  @@index([tenantId])
 }
 
 

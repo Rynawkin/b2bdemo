@@ -10,6 +10,8 @@ import adminApi from '@/lib/api/admin';
 import { formatDateShort } from '@/lib/utils/format';
 import { Notification } from '@/types';
 import { usePermissions } from '@/hooks/usePermissions';
+import { useTenant } from '@/components/TenantProvider';
+import type { TenantFeatureFlags } from '@/lib/tenant/types';
 import {
   LayoutDashboard,
   ClipboardList,
@@ -42,6 +44,7 @@ interface NavItem {
   icon: React.ComponentType<{ className?: string }>;
   description?: string;
   permission?: string | string[];
+  feature?: keyof TenantFeatureFlags;
 }
 
 const navItems: NavItem[] = [
@@ -65,14 +68,14 @@ const navItems: NavItem[] = [
   { name: 'Teklifler', href: '/quotes', icon: FileText, description: 'Teklif yönetimi', permission: 'admin:quotes' },
   { name: 'Teklif Kalemleri', href: '/quotes/lines', icon: FileText, description: 'Teklif kalemleri', permission: 'admin:quotes' },
   { name: 'Sipariş Takip', href: '/order-tracking', icon: Mail, description: 'Bekleyen siparişler', permission: 'admin:order-tracking' },
-  { name: 'Depo Kiosk', href: '/warehouse', icon: MonitorSmartphone, description: 'Toplama ve yükleme ekranı', permission: 'admin:warehouse-kiosk' },
-  { name: 'Perakende Satis', href: '/warehouse/retail', icon: MonitorSmartphone, description: 'Hizli satis ekrani', permission: 'admin:warehouse-retail' },
-  { name: 'Resim Hata Talepleri', href: '/warehouse/image-issues', icon: ImageOff, description: 'Depodan gelen urun resmi hatalari', permission: 'admin:order-tracking' },
+  { name: 'Depo Kiosk', href: '/warehouse', icon: MonitorSmartphone, description: 'Toplama ve yükleme ekranı', permission: 'admin:warehouse-kiosk', feature: 'warehouse' },
+  { name: 'Perakende Satis', href: '/warehouse/retail', icon: MonitorSmartphone, description: 'Hizli satis ekrani', permission: 'admin:warehouse-retail', feature: 'warehouse' },
+  { name: 'Resim Hata Talepleri', href: '/warehouse/image-issues', icon: ImageOff, description: 'Depodan gelen urun resmi hatalari', permission: 'admin:order-tracking', feature: 'warehouse' },
   { name: 'Müşteriler', href: '/customers', icon: Users, description: 'Müşteri listesi', permission: 'admin:customers' },
   { name: 'Musteri Portfoyum', href: '/portfolio', icon: Users, description: 'Musteri portfoyu', permission: 'admin:customers' },
   { name: 'Anlaşmalı Fiyatlar', href: '/customer-agreements', icon: Tag, description: 'Müşteri anlaşmaları', permission: 'admin:agreements' },
-  { name: 'Vade Takip', href: '/vade', icon: Clock, description: 'Vade ve alacak takibi', permission: 'admin:vade' },
-  { name: 'Faturalar', href: '/einvoices', icon: Download, description: 'E-fatura PDF arşivi', permission: 'admin:einvoices' },
+  { name: 'Vade Takip', href: '/vade', icon: Clock, description: 'Vade ve alacak takibi', permission: 'admin:vade', feature: 'vade' },
+  { name: 'Faturalar', href: '/einvoices', icon: Download, description: 'E-fatura PDF arşivi', permission: 'admin:einvoices', feature: 'eInvoice' },
   { name: 'Ürünler', href: '/admin-products', icon: Package, description: 'Ürün yönetimi', permission: 'admin:products' },
   { name: 'Talepler', href: '/requests', icon: ListTodo, description: 'Görev ve talepler', permission: 'admin:requests' },
   { name: 'Kampanyalar', href: '/campaigns', icon: Target, description: 'İndirim kampanyaları', permission: 'admin:campaigns' },
@@ -109,7 +112,7 @@ navItems.splice(6, 0, {
 const settingsItems: NavItem[] = [
   { name: 'Kategoriler', href: '/categories', icon: Folder, description: 'Fiyatlandirma ayarlari', permission: 'admin:price-rules' },
   { name: 'Urun Override', href: '/product-overrides', icon: Tag, description: 'Ozel fiyatlar', permission: 'admin:price-rules' },
-  { name: 'Tedarikci Iskonto', href: '/supplier-price-list-settings', icon: Percent, description: 'Tedarikci iskonto ayarlari', permission: 'admin:supplier-price-lists' },
+  { name: 'Tedarikci Iskonto', href: '/supplier-price-list-settings', icon: Percent, description: 'Tedarikci iskonto ayarlari', permission: 'admin:supplier-price-lists', feature: 'supplierPriceLists' },
   { name: 'Haric Tutma', href: '/exclusions', icon: Ban, description: 'Rapor filtreleme', permission: 'admin:exclusions' },
   { name: 'Personel', href: '/staff', icon: Users, description: 'Personel yonetimi', permission: 'admin:staff' },
   { name: 'Ayarlar', href: '/settings', icon: Settings, description: 'Sistem ayarlari', permission: 'admin:settings' },
@@ -122,6 +125,7 @@ export function AdminNavigation() {
   const pathname = usePathname();
   const { user, logout } = useAuthStore();
   const { hasPermission, loading: permissionsLoading } = usePermissions();
+  const { tenant } = useTenant();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
@@ -183,7 +187,8 @@ export function AdminNavigation() {
   const isActive = (href: string) => pathname === href;
 
   // Role-based navigation filtering
-  const canAccess = (permission?: string | string[]) => {
+  const canAccess = (permission?: string | string[], feature?: keyof TenantFeatureFlags) => {
+    if (feature && !tenant.features[feature]) return false;
     if (!permission) return true;
     if (permissionsLoading) return true;
     if (Array.isArray(permission)) {
@@ -193,11 +198,11 @@ export function AdminNavigation() {
   };
 
   const getVisibleNavItems = () => {
-    return navItems.filter((item) => canAccess(item.permission));
+    return navItems.filter((item) => canAccess(item.permission, item.feature));
   };
 
   const getVisibleSettingsItems = () => {
-    return settingsItems.filter((item) => canAccess(item.permission));
+    return settingsItems.filter((item) => canAccess(item.permission, item.feature));
   };
 
   const visibleNavItems = getVisibleNavItems();

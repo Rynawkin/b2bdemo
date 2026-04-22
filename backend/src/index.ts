@@ -22,6 +22,8 @@ import productComplementService from './services/product-complement.service';
 import customerActivityService from './services/customer-activity.service';
 import eInvoiceService from './services/einvoice.service';
 import { prisma } from './utils/prisma';
+import { resolveTenant } from './middleware/tenant.middleware';
+import { bootstrapTenantCatalog } from './tenant/db';
 
 
 const getDateInTimeZone = (date: Date, timeZone: string): Date => {
@@ -56,7 +58,14 @@ app.use(helmet());
 // CORS
 app.use(
   cors({
-    origin: config.frontendUrl,
+    origin: (origin, callback) => {
+      if (!origin || config.frontendUrls.includes(origin)) {
+        callback(null, true);
+        return;
+      }
+
+      callback(null, false);
+    },
     credentials: true,
   })
 );
@@ -64,6 +73,7 @@ app.use(
 // Body parsing
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.use(resolveTenant);
 
 // Serve static files (uploads)
 app.use('/uploads', express.static('uploads'));
@@ -383,6 +393,7 @@ if (config.einvoiceAutoImportEnabled) {
 
 const PORT = config.port;
 
+bootstrapTenantCatalog().then(() => {
 app.listen(PORT, () => {
   console.log('');
   console.log('╔═══════════════════════════════════════════════╗');
@@ -404,6 +415,10 @@ app.listen(PORT, () => {
   console.log('');
   console.log('✨ Ready to accept requests!');
   console.log('');
+});
+}).catch((error) => {
+  console.error('Tenant catalog bootstrap failed:', error);
+  process.exit(1);
 });
 
 // Graceful shutdown

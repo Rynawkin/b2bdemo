@@ -24,7 +24,7 @@ class RolePermissionController {
    */
   async getAllRolePermissions(req: Request, res: Response, next: NextFunction) {
     try {
-      const allPermissions = await rolePermissionService.getAllRolePermissions();
+      const allPermissions = await rolePermissionService.getAllRolePermissions(req.tenantId);
 
       res.json({
         permissions: allPermissions,
@@ -52,7 +52,8 @@ class RolePermissionController {
       }
 
       const permissions = await rolePermissionService.getRolePermissions({
-        role: role as UserRole
+        role: role as UserRole,
+        tenantId: req.tenantId,
       });
 
       res.json({
@@ -89,7 +90,8 @@ class RolePermissionController {
       const result = await rolePermissionService.setRolePermission({
         role: role as UserRole,
         permission,
-        enabled
+        enabled,
+        tenantId: req.tenantId,
       });
 
       res.json({
@@ -117,7 +119,8 @@ class RolePermissionController {
       }
 
       const result = await rolePermissionService.initializeDefaultPermissions({
-        role: role as UserRole
+        role: role as UserRole,
+        tenantId: req.tenantId,
       });
 
       res.json(result);
@@ -138,7 +141,8 @@ class RolePermissionController {
       }
 
       const permissions = await rolePermissionService.getRolePermissions({
-        role: req.user.role as UserRole
+        role: req.user.role as UserRole,
+        tenantId: req.tenantId,
       });
 
       res.json({

@@ -1,4 +1,5 @@
 import { User, Product, Order, OrderItem, Cart, CartItem, Category } from '@prisma/client';
+import type { TenantConfig } from '../tenant/types';
 
 // ==================== USER TYPES ====================
 
@@ -339,6 +340,22 @@ declare global {
         email: string;
         role: string;
         assignedSectorCodes: string[]; // SALES_REP için atanan sektör kodları
+      };
+      tenant?: TenantConfig;
+    }
+  }
+}
+
+declare global {
+  namespace Express {
+    interface Request {
+      tenantId?: string;
+      tenantRecord?: {
+        id: string;
+        slug: string;
+        name: string;
+        status: string;
+        domains: string[];
       };
     }
   }

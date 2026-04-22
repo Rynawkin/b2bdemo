@@ -8,6 +8,7 @@ import { Request, Response, NextFunction } from 'express';
 import { verifyToken } from '../utils/jwt';
 import { prisma } from '../utils/prisma';
 import { rolePermissionService } from '../services/role-permission.service';
+import { tenantScopedOrNull } from '../tenant/scope';
 
 /**
  * JWT token'ı doğrula ve req.user'a ekle
@@ -28,8 +29,11 @@ export const authenticate = async (req: Request, res: Response, next: NextFuncti
     // SALES_REP için sektör bilgilerini al
     let assignedSectorCodes: string[] = [];
     if (decoded.role === 'SALES_REP') {
-      const user = await prisma.user.findUnique({
-        where: { id: decoded.userId },
+      const user = await prisma.user.findFirst({
+        where: {
+          id: decoded.userId,
+          ...tenantScopedOrNull(req.tenantId),
+        },
         select: { assignedSectorCodes: true },
       });
       assignedSectorCodes = user?.assignedSectorCodes || [];
@@ -191,7 +195,7 @@ export const requirePermission = (permission: string) => {
     }
 
     try {
-      const allowed = await rolePermissionService.hasPermission(req.user.userId, permission);
+      const allowed = await rolePermissionService.hasPermission(req.user.userId, permission, req.tenantId);
       if (!allowed) {
         res.status(403).json({ error: `Permission required: ${permission}` });
         return;
@@ -218,7 +222,7 @@ export const requireAnyPermission = (permissions: string[]) => {
     try {
       for (const permission of permissions) {
         // eslint-disable-next-line no-await-in-loop
-        const allowed = await rolePermissionService.hasPermission(req.user.userId, permission);
+        const allowed = await rolePermissionService.hasPermission(req.user.userId, permission, req.tenantId);
         if (allowed) {
           next();
           return;

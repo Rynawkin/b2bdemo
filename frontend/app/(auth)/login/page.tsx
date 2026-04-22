@@ -6,11 +6,14 @@ import { useAuthStore } from '@/lib/store/authStore';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { validateField, validators } from '@/lib/utils/validation';
+import { useTenant } from '@/components/TenantProvider';
+import { defaultTenant } from '@/lib/tenant/resolveTenant';
 
 const LoginForm = () => {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { login, isLoading, error } = useAuthStore();
+  const { tenant } = useTenant();
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -66,16 +69,22 @@ const LoginForm = () => {
         <div className="text-center">
           <div className="mb-8 px-4">
             <img
-              src="/logo.png"
+              src={tenant.branding.logoPath || '/logo.png'}
               alt="Bakırcılar Logo"
               className="h-48 w-full max-w-md mx-auto object-contain drop-shadow-2xl"
             />
           </div>
-          <h2 className="text-3xl font-extrabold text-white">
+          <h2 className="text-3xl font-extrabold text-white" style={{ display: 'none' }}>
             Bakırcılar Grup
           </h2>
-          <p className="mt-2 text-sm text-primary-100">
+          <h2 className="text-3xl font-extrabold text-white">
+            {tenant.branding.loginTitle}
+          </h2>
+          <p className="mt-2 text-sm text-primary-100" style={{ display: 'none' }}>
             B2B Sipariş Sistemi
+          </p>
+          <p className="mt-2 text-sm text-primary-100">
+            {tenant.branding.loginSubtitle}
           </p>
         </div>
 
@@ -133,7 +142,7 @@ const LoginForm = () => {
         </form>
 
         {/* Footer */}
-        <div className="text-center text-xs text-primary-100">
+        <div className="text-center text-xs text-primary-100" style={{ display: 'none' }}>
           <p>© 2025 Bakırcılar Grup. Tüm hakları saklıdır.</p>
         </div>
       </div>
@@ -142,13 +151,18 @@ const LoginForm = () => {
 };
 
 export default function LoginPage() {
+  const tenant = defaultTenant;
+
   return (
     <Suspense
-      fallback={
+      fallback={<>
         <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-primary-600 via-primary-700 to-primary-800">
           <div className="text-white text-sm">Loading...</div>
         </div>
-      }
+        <div className="text-center text-xs text-primary-100">
+          <p>© 2025 {tenant.branding.copyrightName}. Tum haklari saklidir.</p>
+        </div>
+      </>}
     >
       <LoginForm />
     </Suspense>

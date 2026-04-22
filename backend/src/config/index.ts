@@ -2,6 +2,19 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
+const frontendUrls = Array.from(
+  new Set(
+    [process.env.FRONTEND_URL, process.env.FRONTEND_URLS]
+      .filter(Boolean)
+      .flatMap((value) =>
+        String(value)
+          .split(',')
+          .map((item) => item.trim())
+          .filter(Boolean)
+      )
+  )
+);
+
 export const config = {
   // Server
   nodeEnv: process.env.NODE_ENV || 'development',
@@ -34,7 +47,8 @@ export const config = {
   },
 
   // CORS
-  frontendUrl: process.env.FRONTEND_URL || 'http://localhost:3000',
+  frontendUrl: frontendUrls[0] || 'http://localhost:3000',
+  frontendUrls: frontendUrls.length > 0 ? frontendUrls : ['http://localhost:3000'],
 
   // Cron
   enableCron: process.env.ENABLE_CRON === 'true',

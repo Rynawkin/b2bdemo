@@ -4,6 +4,7 @@ import { getAuthToken, clearAuth } from '../storage/auth';
 
 const API_BASE_URL =
   process.env.EXPO_PUBLIC_API_BASE_URL || 'https://www.bakircilarkampanya.com/api';
+const TENANT_SLUG = process.env.EXPO_PUBLIC_TENANT_SLUG || 'bakircilar';
 
 export const apiClient = axios.create({
   baseURL: API_BASE_URL,
@@ -14,6 +15,7 @@ export const apiClient = axios.create({
 });
 
 apiClient.interceptors.request.use(async (config) => {
+  config.headers['x-tenant-slug'] = TENANT_SLUG;
   const token = await getAuthToken();
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;

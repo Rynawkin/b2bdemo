@@ -7,6 +7,7 @@
 import { prisma } from '../utils/prisma';
 import * as brevo from '@sendinblue/client';
 import orderTrackingService from './order-tracking.service';
+import { getDefaultTenantPublicConfig } from '../tenant/catalog';
 
 interface OrderEmailData {
   customerCode: string;
@@ -133,6 +134,9 @@ type MarginComplianceEmailSummary = {
   sevenDaySummary: MarginSevenDaySummary;
 };
 
+const defaultTenant = getDefaultTenantPublicConfig();
+const portalUrl = process.env.FRONTEND_URL || '#';
+
 class EmailService {
   private apiInstance: brevo.TransactionalEmailsApi;
   private senderEmail: string;
@@ -145,7 +149,8 @@ class EmailService {
       brevo.TransactionalEmailsApiApiKeys.apiKey,
       process.env.BREVO_API_KEY || ''
     );
-    this.senderEmail = process.env.BREVO_SENDER_EMAIL || 'noreply@bakircilar.com';
+    this.senderEmail = process.env.BREVO_SENDER_EMAIL || defaultTenant.branding.supportEmail;
+    this.senderName = process.env.BREVO_SENDER_NAME || defaultTenant.branding.emailFromName;
     this.senderName = process.env.BREVO_SENDER_NAME || 'Bakırcılar B2B';
   }
 
@@ -595,6 +600,7 @@ class EmailService {
         message: error.message || 'Bilinmeyen hata',
       };
     }
+    this.senderName = process.env.BREVO_SENDER_NAME || defaultTenant.branding.emailFromName;
   }
 
   /**
@@ -1316,8 +1322,8 @@ class EmailService {
             </div>
 
             <div style="margin-top: 18px; font-size: 13px; color: #6b7280;">
-              Detaylara erismek icin B2B panelinden raporu acabilirsiniz.
-              <a href="${process.env.FRONTEND_URL || '#'}" style="color: #2563eb; text-decoration: none;">Panel</a>
+              Detaylara erismek icin ${defaultTenant.branding.customerPortalName} uzerinden raporu acabilirsiniz.
+              <a href="${portalUrl}" style="color: #2563eb; text-decoration: none;">Panel</a>
             </div>
           </div>
         </div>

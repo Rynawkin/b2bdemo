@@ -7,6 +7,7 @@ import { prisma } from '../utils/prisma';
 import { comparePassword } from '../utils/password';
 import { generateToken } from '../utils/jwt';
 import { LoginRequest, UserResponse } from '../types';
+import { tenantScopedOrNull } from '../tenant/scope';
 
 export class AuthController {
   /**
@@ -15,10 +16,14 @@ export class AuthController {
   async login(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const { email, password } = req.body as LoginRequest;
+      const tenantScope = tenantScopedOrNull(req.tenantId);
 
       // Kullanıcıyı bul - email veya cari kodu ile
-      let user = await prisma.user.findUnique({
-        where: { email },
+      let user = await prisma.user.findFirst({
+        where: {
+          email,
+          ...tenantScope,
+        },
         include: {
           parentCustomer: {
             select: {
@@ -34,8 +39,11 @@ export class AuthController {
 
       // Email ile bulunamadıysa, cari kodu ile dene
       if (!user) {
-        user = await prisma.user.findUnique({
-          where: { mikroCariCode: email },
+        user = await prisma.user.findFirst({
+          where: {
+            mikroCariCode: email,
+            ...tenantScope,
+          },
           include: {
             parentCustomer: {
               select: {
@@ -113,14 +121,18 @@ export class AuthController {
         return;
       }
 
-      const user = await prisma.user.findUnique({
-        where: { id: req.user.userId },
+      const user = await prisma.user.findFirst({
+        where: {
+          id: req.user.userId,
+          ...tenantScopedOrNull(req.tenantId),
+        },
         select: {
           id: true,
           email: true,
           name: true,
           displayName: true,
           role: true,
+          tenantId: true,
           customerType: true,
           mikroCariCode: true,
           priceVisibility: true,
@@ -137,7 +149,7 @@ export class AuthController {
         },
       });
 
-      if (!user) {
+      if (!user || (req.tenantId && user.tenantId && user.tenantId !== req.tenantId)) {
         res.status(404).json({ error: 'User not found' });
         return;
       }

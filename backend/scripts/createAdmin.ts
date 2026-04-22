@@ -7,6 +7,9 @@
 import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcrypt';
 import readline from 'readline';
+import { getDefaultTenantSlug, getTenantConfigBySlug } from '../src/tenant/catalog';
+import { ensureTenantRecord } from '../src/tenant/db';
+import { tenantScopedOrNull } from '../src/tenant/scope';
 
 const prisma = new PrismaClient();
 
@@ -31,6 +34,10 @@ async function createAdmin() {
   console.log('');
 
   try {
+    const tenantSlug = process.env.DEFAULT_TENANT_SLUG || getDefaultTenantSlug();
+    const tenantConfig = getTenantConfigBySlug(tenantSlug);
+    const tenantRecord = await ensureTenantRecord(tenantConfig);
+
     const email = await question('Email: ');
     const password = await question('Şifre: ');
     const name = await question('Ad Soyad: ');
@@ -41,8 +48,11 @@ async function createAdmin() {
     }
 
     // Email kontrolü
-    const existing = await prisma.user.findUnique({
-      where: { email },
+    const existing = await prisma.user.findFirst({
+      where: {
+        email,
+        ...tenantScopedOrNull(tenantRecord.id),
+      },
     });
 
     if (existing) {
@@ -59,6 +69,7 @@ async function createAdmin() {
         email,
         password: hashedPassword,
         name,
+        tenantId: tenantRecord.id,
         role: 'ADMIN',
         active: true,
       },
@@ -73,11 +84,14 @@ async function createAdmin() {
     console.log('');
 
     // Default settings oluştur
-    const existingSettings = await prisma.settings.findFirst();
+    const existingSettings = await prisma.settings.findFirst({
+      where: tenantScopedOrNull(tenantRecord.id),
+    });
 
     if (!existingSettings) {
       await prisma.settings.create({
         data: {
+          tenantId: tenantRecord.id,
           calculationPeriodMonths: 3,
           includedWarehouses: ['DEPO1', 'MERKEZ'],
           minimumExcessThreshold: 10,
