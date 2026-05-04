@@ -237,6 +237,28 @@ class SyncService {
     let count = 0;
     let skippedNoCategory = 0;
 
+    const categoryCodes = Array.from(
+      new Set(mikroProducts.map((product) => product.categoryId).filter(Boolean))
+    );
+    const categories = await prisma.category.findMany({
+      where: { mikroCode: { in: categoryCodes } },
+    });
+    const categoryMap = new Map(categories.map((category) => [category.mikroCode, category]));
+
+    const salesHistoryMap = new Map<string, Record<string, number>>();
+    for (const sale of salesHistory) {
+      const productCode = String(sale.productCode || '').trim();
+      if (!productCode) continue;
+
+      const saleDate = sale.saleDate instanceof Date ? sale.saleDate : new Date(sale.saleDate);
+      if (Number.isNaN(saleDate.getTime())) continue;
+
+      const productSales = salesHistoryMap.get(productCode) || {};
+      const key = saleDate.toISOString().split('T')[0];
+      productSales[key] = (productSales[key] || 0) + (Number(sale.totalQuantity) || 0);
+      salesHistoryMap.set(productCode, productSales);
+    }
+
     const pendingMap = new Map<string, {
       sales: number;
       purchases: number;
@@ -269,9 +291,7 @@ class SyncService {
 
     for (const mikroProduct of mikroProducts) {
       // Kategorisini bul
-      const category = await prisma.category.findUnique({
-        where: { mikroCode: mikroProduct.categoryId },
-      });
+      const category = categoryMap.get(mikroProduct.categoryId);
 
       if (!category) {
         console.warn(`⚠️ Kategori bulunamadı: ${mikroProduct.categoryId} (Ürün: ${mikroProduct.code})`);
@@ -285,14 +305,7 @@ class SyncService {
       const unit2Factor = Number.isFinite(rawUnit2Factor) && rawUnit2Factor !== 0 ? rawUnit2Factor : null;
 
       // Satış geçmişini topla (günlük)
-      const productSales = salesHistory.filter((s) => s.productCode === mikroProduct.code);
-      const salesHistoryJson: Record<string, number> = {};
-      productSales.forEach((s) => {
-        // YYYY-MM-DD formatına çevir
-        const saleDate = s.saleDate instanceof Date ? s.saleDate : new Date(s.saleDate);
-        const key = saleDate.toISOString().split('T')[0];
-        salesHistoryJson[key] = s.totalQuantity;
-      });
+      const salesHistoryJson = salesHistoryMap.get(mikroProduct.code) || {};
 
       // Bekleyen siparişleri topla
       const pendingEntry = pendingMap.get(mikroProduct.code);
