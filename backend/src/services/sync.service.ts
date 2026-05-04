@@ -224,14 +224,23 @@ class SyncService {
     console.log(`📊 ERP'den ${mikroProducts.length} ürün çekildi`);
 
     if (mikroProducts.length > 0) {
-      const mikroCodes = mikroProducts.map((product) => product.code);
-      await prisma.product.updateMany({
-        where: {
-          active: true,
-          mikroCode: { notIn: mikroCodes },
-        },
-        data: { active: false },
+      const mikroCodes = new Set(mikroProducts.map((product) => product.code));
+      const activeProducts = await prisma.product.findMany({
+        where: { active: true },
+        select: { id: true, mikroCode: true },
       });
+      const staleProductIds = activeProducts
+        .filter((product) => !mikroCodes.has(product.mikroCode))
+        .map((product) => product.id);
+
+      const staleBatchSize = 1000;
+      for (let i = 0; i < staleProductIds.length; i += staleBatchSize) {
+        const batch = staleProductIds.slice(i, i + staleBatchSize);
+        await prisma.product.updateMany({
+          where: { id: { in: batch } },
+          data: { active: false },
+        });
+      }
     }
 
     let count = 0;
