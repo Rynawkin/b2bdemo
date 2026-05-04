@@ -7,7 +7,8 @@
  */
 
 import { PrismaClient } from '@prisma/client';
-import mikroService from './mikro.service';
+import mikroService from './mikroFactory.service';
+import { config } from '../config';
 import { randomUUID } from 'crypto';
 
 const prisma = new PrismaClient();
@@ -180,6 +181,32 @@ class PriceSyncService {
 
       // ERP'ye bağlan
       await mikroService.connect();
+
+      const baytService = mikroService as any;
+      if (config.erpProvider === 'bayt' && typeof baytService.getPriceListMap === 'function') {
+        const priceListMap = await baytService.getPriceListMap();
+        await this.syncPriceStatsFromMikro(priceListMap);
+        await mikroService.disconnect();
+
+        const endTime = new Date();
+        await prisma.$executeRaw`
+          UPDATE price_sync_log
+          SET status = 'completed',
+              end_time = ${endTime},
+              records_synced = ${priceListMap.size},
+              last_synced_date = ${endTime}
+          WHERE id = ${syncId}
+        `;
+
+        console.log(`Bayt price stats updated: ${priceListMap.size} products`);
+
+        return {
+          success: true,
+          syncType: 'full',
+          recordsSynced: priceListMap.size,
+        };
+      }
+
       const priceListMap = await this.fetchPriceListMap();
 
       let recordsSynced = 0;

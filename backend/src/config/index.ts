@@ -31,6 +31,7 @@ export const config = {
   jwtExpiresIn: '30d', // 30 gün - Uzun sync işlemleri için
 
   // External ERP
+  erpProvider: (process.env.ERP_PROVIDER || 'mikro').toLowerCase(),
   useMockMikro: (process.env.USE_MOCK_ERP || process.env.USE_MOCK_MIKRO) === 'true',
   mikro: {
     server: process.env.ERP_SERVER || process.env.MIKRO_SERVER || '',
