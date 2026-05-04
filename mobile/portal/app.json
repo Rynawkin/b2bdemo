@@ -1,8 +1,8 @@
 {
   "expo": {
-    "name": "Bakircilar Portal",
-    "slug": "bakircilar-portal",
-    "scheme": "bakircilar-portal",
+    "name": "OtoOlgun Portal",
+    "slug": "otoolgun-portal",
+    "scheme": "otoolgun-portal",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -16,11 +16,11 @@
       "**/*"
     ],
     "ios": {
-      "bundleIdentifier": "com.bakircilar.portal",
+      "bundleIdentifier": "com.otoolgun.portal",
       "supportsTablet": true
     },
     "android": {
-      "package": "com.bakircilar.portal",
+      "package": "com.otoolgun.portal",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#F7FAFF"

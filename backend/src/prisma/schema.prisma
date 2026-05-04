@@ -31,7 +31,7 @@ enum PriceType {
 
 enum OrderStatus {
   PENDING   // Bekliyor (admin onayı bekliyor)
-  APPROVED  // Onaylandı ve Mikro'ya yazıldı
+  APPROVED  // Onaylandı ve ERP'ye yazıldı
   REJECTED  // Reddedildi
 }
 
@@ -52,7 +52,7 @@ model User {
 
   // Müşteri bilgileri (sadece CUSTOMER role için)
   customerType  CustomerType?
-  mikroCariCode String?       @unique // Mikro ERP'deki cari kodu
+  mikroCariCode String?       @unique // ERP'deki cari kodu
   // Optional price list overrides (use settings when null)
   invoicedPriceListNo Int?
   whitePriceListNo    Int?
@@ -129,7 +129,7 @@ model Product {
   categoryId              String
   category                Category  @relation(fields: [categoryId], references: [id])
 
-  // Maliyet bilgileri (Mikro'dan sync)
+  // Maliyet bilgileri (ERP'den sync)
   lastEntryPrice          Float?    // Son giriş fiyatı
   lastEntryDate           DateTime? // Son giriş tarihi
   currentCost             Float?    // Güncel maliyet (tanımlı)
@@ -262,7 +262,7 @@ model Order {
   items           OrderItem[]
   totalAmount     Float
 
-  // Mikro'ya yazılan sipariş ID'leri
+  // ERP'ye yazılan sipariş ID'leri
   // [invoiced_siparis_id, white_siparis_id] veya sadece [invoiced] veya [white]
   mikroOrderIds   String[]      @default([])
 

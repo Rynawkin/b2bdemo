@@ -22,28 +22,28 @@ PORT=5000
 
 # PostgreSQL Database
 # IMPORTANT: Use 127.0.0.1 instead of localhost to avoid PostgreSQL peer authentication issues
-DATABASE_URL="postgresql://postgres:postgres@127.0.0.1:5432/mikrob2b?schema=public"
+DATABASE_URL="postgresql://postgres:postgres@127.0.0.1:5432/otoolgunb2b?schema=public"
 
 # JWT Secret
 JWT_SECRET=replace-with-a-random-32-char-secret
 
-# Mikro ERP Configuration
-USE_MOCK_MIKRO=false
-MIKRO_SERVER=your-mikro-server
-MIKRO_DATABASE=your-mikro-database
-MIKRO_USER=your-mikro-user
-MIKRO_PASSWORD=your-mikro-password
-MIKRO_PORT=1433
+# ERP Configuration
+USE_MOCK_ERP=false
+ERP_SERVER=your-erp-server
+ERP_DATABASE=your-erp-database
+ERP_USER=your-erp-user
+ERP_PASSWORD=your-erp-password
+ERP_PORT=1433
 
 # CORS
 FRONTEND_URL=https://your-frontend-domain
 FRONTEND_URLS=https://your-frontend-domain,https://your-admin-domain
 
 # Tenant Resolution
-DEFAULT_TENANT_SLUG=platform
+DEFAULT_TENANT_SLUG=otoolgun
 TENANT_PLATFORM_DOMAINS=your-frontend-domain,your-admin-domain
-TENANT_BAKIRCILAR_DOMAINS=
-TARGET_TENANT_SLUG=platform
+TENANT_OTOOLGUN_DOMAINS=
+TARGET_TENANT_SLUG=otoolgun
 
 # Cron Job
 ENABLE_CRON=false

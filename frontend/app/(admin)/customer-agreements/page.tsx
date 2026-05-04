@@ -345,7 +345,7 @@ export default function AgreementsPage() {
 
   const handleDownloadTemplate = () => {
     const rows = [
-      ['Mikro Kod', 'Faturali Fiyat', 'Beyaz Fiyat', 'Musteri Urun Kodu', 'Min Miktar', 'Baslangic', 'Bitis'],
+      ['ERP Kod', 'Faturali Fiyat', 'Beyaz Fiyat', 'Musteri Urun Kodu', 'Min Miktar', 'Baslangic', 'Bitis'],
       ['B101996', '86,69', '76,61', 'CUS-001', '1', new Date().toISOString().slice(0, 10), ''],
     ];
     const worksheet = XLSX.utils.aoa_to_sheet(rows);
@@ -382,7 +382,7 @@ export default function AgreementsPage() {
       const validToIndex = findColumnIndex(headers, ['bitis', 'bitiş', 'gecerlilik bitis', 'valid to']);
 
       if (codeIndex === -1 || invoicedIndex === -1) {
-        throw new Error('Mikro kod ve faturali fiyat kolonlari zorunludur.');
+        throw new Error('ERP kod ve faturali fiyat kolonlari zorunludur.');
       }
 
       const rows: AgreementImportRow[] = [];
@@ -571,7 +571,7 @@ export default function AgreementsPage() {
             </Button>
           </div>
           <div className="space-y-3 text-sm text-gray-600">
-            <p>Excel kolonlari: Mikro Kod, Faturali Fiyat, Beyaz Fiyat (opsiyonel), Musteri Urun Kodu (opsiyonel), Min Miktar, Baslangic, Bitis.</p>
+            <p>Excel kolonlari: ERP Kod, Faturali Fiyat, Beyaz Fiyat (opsiyonel), Musteri Urun Kodu (opsiyonel), Min Miktar, Baslangic, Bitis.</p>
             <p>Aktarim, secili musteri icin uygulanir.</p>
           </div>
           <div className="mt-4 flex flex-wrap gap-3 items-center">

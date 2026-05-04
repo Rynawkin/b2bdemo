@@ -1,7 +1,7 @@
 /**
  * Price Synchronization Service
  *
- * Mikro ERP'den fiyat değişikliklerini PostgreSQL'e senkronize eder
+ * ERP'den fiyat değişikliklerini PostgreSQL'e senkronize eder
  * - İlk çalıştırmada: Tüm geçmişi çeker (full sync)
  * - Sonraki çalıştırmalarda: Sadece son sync'ten sonraki değişiklikleri çeker (incremental sync)
  */
@@ -178,7 +178,7 @@ class PriceSyncService {
         VALUES (${syncId}, ${syncType}, ${startTime}, 'running', ${startTime})
       `;
 
-      // Mikro'ya bağlan
+      // ERP'ye bağlan
       await mikroService.connect();
       const priceListMap = await this.fetchPriceListMap();
 

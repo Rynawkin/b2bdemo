@@ -308,7 +308,7 @@ export default function ExclusionsPage() {
           <CardHeader>
             <CardTitle>Hizli Urun Dislama</CardTitle>
             <CardDescription>
-              Mikro urun koduna gore ara, tek tikla disla veya geri al.
+              ERP urun koduna gore ara, tek tikla disla veya geri al.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">

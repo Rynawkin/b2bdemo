@@ -1,5 +1,5 @@
 /**
- * Gerçek Mikro ERP Service
+ * Gerçek ERP Service
  *
  * Production'da Mikro MSSQL veritabanına bağlanarak
  * veri çeker ve sipariş yazar.
@@ -32,7 +32,7 @@ class MikroService {
   public sipExtraColumns: { teklifUid: boolean } | null = null;
 
   /**
-   * Mikro KDV kod → yüzde dönüşümü
+   * ERP KDV kod → yüzde dönüşümü
    * Gerçek hareketlerden tespit edildi
    */
   public convertVatCodeToRate(vatCode: number): number {
@@ -49,7 +49,7 @@ class MikroService {
     return vatMap[vatCode] ?? 0.20; // Default %20
   }
   /**
-   * VAT rate -> Mikro vergi pntr code
+   * VAT rate -> ERP vergi pntr code
    */
   public convertVatRateToCode(rate: number): number {
     const normalized = Math.round(rate * 100) / 100;
@@ -70,7 +70,7 @@ class MikroService {
   }
 
   /**
-   * Mikro veritabanına bağlan
+   * ERP veritabanına bağlan
    */
   async connect(): Promise<void> {
     if (this.pool) {
@@ -99,11 +99,11 @@ class MikroService {
         this.pool = null;
       });
       await this.pool.connect();
-      console.log('✅ Mikro ERP bağlantısı başarılı');
+      console.log('✅ ERP bağlantısı başarılı');
     } catch (error) {
-      console.error('❌ Mikro ERP bağlantı hatası:', error);
+      console.error('❌ ERP bağlantı hatası:', error);
       this.pool = null;
-      throw new Error('Mikro ERP bağlantısı kurulamadı');
+      throw new Error('ERP bağlantısı kurulamadı');
     }
   }
 
@@ -1143,7 +1143,7 @@ class MikroService {
   }
 
   /**
-   * Mikro'ya sipariş yaz
+   * ERP'ye sipariş yaz
    *
    * Faturalı ve beyaz siparişler için ayrı evrak serileri kullanılır:
    * - Faturalı: "B2B_FATURAL"
@@ -1212,13 +1212,13 @@ class MikroService {
     const paymentPlanNoValue = Number.isFinite(paymentPlanNoRaw) && paymentPlanNoRaw > 0 ? Math.trunc(paymentPlanNoRaw) : 0;
     let resolvedPlanNo = paymentPlanNoValue;
     const evrakSeriValue = evrakSeriInput ? String(evrakSeriInput).trim().slice(0, 20) : '';
-    const defaultSorMerkez = String(process.env.MIKRO_SORMERK || 'HENDEK').trim().slice(0, 25);
-    const mikroUserNoRaw = Number(process.env.MIKRO_USER_NO || process.env.MIKRO_USERNO || 1);
+    const defaultSorMerkez = String(process.env.ERP_SORMERK || process.env.MIKRO_SORMERK || 'HENDEK').trim().slice(0, 25);
+    const mikroUserNoRaw = Number(process.env.ERP_USER_NO || process.env.MIKRO_USER_NO || process.env.MIKRO_USERNO || 1);
     const mikroUserNo =
       Number.isFinite(mikroUserNoRaw) && mikroUserNoRaw > 0
         ? Math.trunc(mikroUserNoRaw)
         : 1;
-    const projeKodu = String(process.env.MIKRO_PROJE_KODU || 'R').trim().slice(0, 25);
+    const projeKodu = String(process.env.ERP_PROJE_KODU || process.env.MIKRO_PROJE_KODU || 'R').trim().slice(0, 25);
     const hareketTipi = 0;
     const vergiSizFlag = applyVAT ? 0 : 1;
     const deliveryTypeValue = String(deliveryTypeInput || '').trim().slice(0, 25);
@@ -1342,7 +1342,7 @@ class MikroService {
 
       const orderNumber = `${evrakSeri}-${evrakSira}`;
 
-      console.log(`📝 Mikro'ya sipariş yazılıyor: ${orderNumber}`);
+      console.log(`📝 ERP'ye sipariş yazılıyor: ${orderNumber}`);
 
       // 2. Her item için satır ekle
       for (let i = 0; i < items.length; i++) {
@@ -1902,7 +1902,7 @@ class MikroService {
       }
       console.error('Full error object:', JSON.stringify(error, Object.getOwnPropertyNames(error), 2));
 
-      throw new Error(`Sipariş Mikro'ya yazılamadı: ${error instanceof Error ? error.message : 'Bilinmeyen hata'}`);
+      throw new Error(`Sipariş ERP'ye yazılamadı: ${error instanceof Error ? error.message : 'Bilinmeyen hata'}`);
     } finally {
       // Trigger'ı tekrar enable et (başarılı veya başarısız fark etmez)
       try {
@@ -1915,7 +1915,7 @@ class MikroService {
   }
 
   /**
-   * Update existing Mikro order lines
+   * Update existing ERP order lines
    */
   async updateOrderLines(params: {
     orderNumber: string;
@@ -1934,12 +1934,12 @@ class MikroService {
     const orderNumber = String(params.orderNumber || '').trim();
     const lastDash = orderNumber.lastIndexOf('-');
     if (lastDash <= 0 || lastDash === orderNumber.length - 1) {
-      throw new Error('Invalid Mikro order number');
+      throw new Error('Invalid ERP order number');
     }
     const evrakSeri = orderNumber.slice(0, lastDash);
     const evrakSira = Number(orderNumber.slice(lastDash + 1));
     if (!Number.isFinite(evrakSira) || evrakSira <= 0) {
-      throw new Error('Invalid Mikro order sequence');
+      throw new Error('Invalid ERP order sequence');
     }
 
     const documentDescriptionValue = params.documentDescription
@@ -2118,7 +2118,7 @@ class MikroService {
    * @returns true ise yeni oluşturuldu, false ise zaten vardı
    */
   /**
-   * Mikro'ya teklif yaz
+   * ERP'ye teklif yaz
    * NOT: GerÃ§ek kolonlar kesinleÅŸtirildikten sonra gÃ¼ncellenecek.
    */
   async writeQuote(quoteData: {
@@ -2178,9 +2178,9 @@ class MikroService {
       const documentNoValue = (documentNo || '').trim().slice(0, 50);
       const responsibleValue = (responsibleCode || '').trim().slice(0, 25);
       const paymentPlanValue = Number.isFinite(paymentPlanNo as number) ? Number(paymentPlanNo) : 0;
-      const sorMerkez = process.env.MIKRO_SORMERK || 'HENDEK';
-      const mikroUserNo = Number(process.env.MIKRO_USER_NO || process.env.MIKRO_USERNO || 1);
-      const fileId = Number(process.env.MIKRO_FILE_ID || 100);
+      const sorMerkez = process.env.ERP_SORMERK || process.env.MIKRO_SORMERK || 'HENDEK';
+      const mikroUserNo = Number(process.env.ERP_USER_NO || process.env.MIKRO_USER_NO || process.env.MIKRO_USERNO || 1);
+      const fileId = Number(process.env.ERP_FILE_ID || process.env.MIKRO_FILE_ID || 100);
       const zeroGuid = '00000000-0000-0000-0000-000000000000';
 
       for (let i = 0; i < items.length; i++) {
@@ -2423,7 +2423,7 @@ class MikroService {
 
       await transaction.commit();
 
-      console.log(`✅ Teklif Mikro'ya yazildi: ${mikroQuoteNumber}`);
+      console.log(`✅ Teklif ERP'ye yazildi: ${mikroQuoteNumber}`);
 
       return {
         quoteNumber: mikroQuoteNumber,
@@ -2432,7 +2432,7 @@ class MikroService {
       await transaction.rollback();
 
       console.error('❌ Teklif yazma hatasi:', error);
-      throw new Error(`Teklif Mikro'ya yazilamadi: ${error instanceof Error ? error.message : 'Bilinmeyen hata'}`);
+      throw new Error(`Teklif ERP'ye yazilamadi: ${error instanceof Error ? error.message : 'Bilinmeyen hata'}`);
     }
   }
 
@@ -2494,9 +2494,9 @@ class MikroService {
       const documentNoValue = (documentNo || '').trim().slice(0, 50);
       const responsibleValue = (responsibleCode || '').trim().slice(0, 25);
       const paymentPlanValue = Number.isFinite(paymentPlanNo as number) ? Number(paymentPlanNo) : 0;
-      const sorMerkez = process.env.MIKRO_SORMERK || 'HENDEK';
-      const mikroUserNo = Number(process.env.MIKRO_USER_NO || process.env.MIKRO_USERNO || 1);
-      const fileId = Number(process.env.MIKRO_FILE_ID || 100);
+      const sorMerkez = process.env.ERP_SORMERK || process.env.MIKRO_SORMERK || 'HENDEK';
+      const mikroUserNo = Number(process.env.ERP_USER_NO || process.env.MIKRO_USER_NO || process.env.MIKRO_USERNO || 1);
+      const fileId = Number(process.env.ERP_FILE_ID || process.env.MIKRO_FILE_ID || 100);
       const zeroGuid = '00000000-0000-0000-0000-000000000000';
 
       for (let i = 0; i < items.length; i++) {
@@ -2943,7 +2943,7 @@ class MikroService {
       await this.pool!.request().query('SELECT 1 as test');
       return true;
     } catch (error) {
-      console.error('❌ Mikro bağlantı testi başarısız:', error);
+      console.error('❌ ERP bağlantı testi başarısız:', error);
       return false;
     }
   }

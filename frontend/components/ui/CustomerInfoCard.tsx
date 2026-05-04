@@ -58,7 +58,7 @@ export function CustomerInfoCard({ customer, compact = false }: CustomerInfoCard
         </div>
         <div className="grid grid-cols-2 gap-2 text-xs text-gray-600">
           <div>
-            <span className="font-medium">Mikro Cari:</span> {customer.mikroCariCode || '-'}
+            <span className="font-medium">ERP Cari:</span> {customer.mikroCariCode || '-'}
           </div>
           {customer.city && (
             <div>
@@ -97,7 +97,7 @@ export function CustomerInfoCard({ customer, compact = false }: CustomerInfoCard
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 text-sm">
         <div className="bg-white rounded p-3 shadow-sm">
-          <p className="text-gray-500 text-xs mb-1">Mikro Cari Kodu</p>
+          <p className="text-gray-500 text-xs mb-1">ERP Cari Kodu</p>
           <p className="font-semibold text-primary-700">{customer.mikroCariCode || '-'}</p>
         </div>
 

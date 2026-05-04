@@ -484,9 +484,9 @@ class WarehouseWorkflowService {
 
     const sthColumns = await this.getTableColumns('STOK_HAREKETLERI');
     const zeroGuid = '00000000-0000-0000-0000-000000000000';
-    const mikroUserNoRaw = Number(process.env.MIKRO_USER_NO || process.env.MIKRO_USERNO || 1);
+    const mikroUserNoRaw = Number(process.env.ERP_USER_NO || process.env.MIKRO_USER_NO || process.env.MIKRO_USERNO || 1);
     const mikroUserNo = Number.isFinite(mikroUserNoRaw) && mikroUserNoRaw > 0 ? Math.trunc(mikroUserNoRaw) : 1;
-    const defaultSorMerkez = String(process.env.MIKRO_SORMERK || 'HENDEK').trim().slice(0, 25);
+    const defaultSorMerkez = String(process.env.ERP_SORMERK || process.env.MIKRO_SORMERK || 'HENDEK').trim().slice(0, 25);
     const docGuid = randomUUID();
 
     const createdLines: Array<{
@@ -2203,7 +2203,7 @@ class WarehouseWorkflowService {
       ORDER BY eir_evrakno_sira DESC
     `);
     const templateRow = (templateRows as any[])[0] || {};
-    const mikroUserNoRaw = Number(process.env.MIKRO_USER_NO || process.env.MIKRO_USERNO || 1);
+    const mikroUserNoRaw = Number(process.env.ERP_USER_NO || process.env.MIKRO_USER_NO || process.env.MIKRO_USERNO || 1);
     const mikroUserNo = Number.isFinite(mikroUserNoRaw) && mikroUserNoRaw > 0 ? Math.trunc(mikroUserNoRaw) : 1;
 
     const insertValues: Record<string, unknown> = {
@@ -2345,7 +2345,7 @@ class WarehouseWorkflowService {
       templateRow = (templateRows as any[])[0];
     }
     if (!templateRow) {
-      throw new Error('Irsaliye olusturma icin Mikroda uygun ornek kayit bulunamadi');
+      throw new Error("Irsaliye olusturma icin ERP'de uygun ornek kayit bulunamadi");
     }
     const templateDocType = 1;
 
@@ -2368,9 +2368,9 @@ class WarehouseWorkflowService {
     const belgeNoColumn = sipColumns.has('sip_belge_no') ? 'sip_belge_no' : sipColumns.has('sip_belgeno') ? 'sip_belgeno' : null;
     const hasBelgeTarih = sipColumns.has('sip_belge_tarih');
     const zeroGuid = '00000000-0000-0000-0000-000000000000';
-    const mikroUserNoRaw = Number(process.env.MIKRO_USER_NO || process.env.MIKRO_USERNO || 1);
+    const mikroUserNoRaw = Number(process.env.ERP_USER_NO || process.env.MIKRO_USER_NO || process.env.MIKRO_USERNO || 1);
     const mikroUserNo = Number.isFinite(mikroUserNoRaw) && mikroUserNoRaw > 0 ? Math.trunc(mikroUserNoRaw) : 1;
-    const defaultSorMerkez = String(process.env.MIKRO_SORMERK || 'HENDEK').trim().slice(0, 25);
+    const defaultSorMerkez = String(process.env.ERP_SORMERK || process.env.MIKRO_SORMERK || 'HENDEK').trim().slice(0, 25);
     const docGuid = randomUUID();
     const deliveryNoteNo = `${deliverySeries}-${deliverySequence}`;
     const lineLinks: Array<{ sipGuid: string; deliverQty: number }> = [];

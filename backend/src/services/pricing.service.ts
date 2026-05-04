@@ -63,7 +63,7 @@ class PricingService {
    *
    * Bu sistem, ürünün maliyetini hesaplarken iki fiyatı karıştırır:
    * 1. "Son Giriş Fiyatı" - En son ne kadara aldık
-   * 2. "Güncel Maliyet" - Mikro'daki tanımlı maliyet
+   * 2. "Güncel Maliyet" - ERP'deki tanımlı maliyet
    *
    * Nasıl çalışır?
    * - Eğer son alışımız YAKINDA olduysa (örn. 30 gün içinde):
@@ -126,7 +126,7 @@ class PricingService {
    * Örnek: maliyet=100, marj=0.20 → 100 × 1.20 = 120 TL (KDV hariç)
    *
    * Bu fiyat müşteriye gösterilir ve üzerine KDV eklenir.
-   * Mikro'ya yazarken: sip_tutar = bu fiyat, sip_vergi = tutar × vatRate
+   * ERP'ye yazarken: sip_tutar = bu fiyat, sip_vergi = tutar × vatRate
    */
   calculateInvoicedPrice(cost: number, profitMargin: number): number {
     return cost * (1 + profitMargin);

@@ -1104,10 +1104,10 @@ export function CustomerEditModal({
         {/* Read-Only Mikro Fields Section */}
         <div className="bg-gray-50 rounded-lg p-4 border-2 border-gray-200">
           <h3 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
-            🔒 Mikro ERP Bilgileri (Sadece Görüntüleme)
+            🔒 ERP Bilgileri (Sadece Görüntüleme)
           </h3>
           <p className="text-xs text-gray-500 mb-4 italic">
-            Bu alanlar Mikro ERP'den senkronize edilir ve düzenlenemez
+            Bu alanlar ERP'den senkronize edilir ve düzenlenemez
           </p>
 
           <div className="grid grid-cols-2 gap-4">
@@ -1119,7 +1119,7 @@ export function CustomerEditModal({
             </div>
 
             <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">Mikro Cari Kodu</label>
+              <label className="block text-xs font-medium text-gray-600 mb-1">ERP Cari Kodu</label>
               <div className="bg-white border border-gray-200 rounded px-3 py-2 text-sm font-mono text-gray-800">
                 {customer.mikroCariCode || '-'}
               </div>

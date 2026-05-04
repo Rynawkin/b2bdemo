@@ -3,8 +3,8 @@ import axios from 'axios';
 import { getAuthToken, clearAuth } from '../storage/auth';
 
 const API_BASE_URL =
-  process.env.EXPO_PUBLIC_API_BASE_URL || 'https://www.bakircilarkampanya.com/api';
-const TENANT_SLUG = process.env.EXPO_PUBLIC_TENANT_SLUG || 'bakircilar';
+  process.env.EXPO_PUBLIC_API_BASE_URL || 'https://www.otoolgun.com/api';
+const TENANT_SLUG = process.env.EXPO_PUBLIC_TENANT_SLUG || 'otoolgun';
 
 export const apiClient = axios.create({
   baseURL: API_BASE_URL,

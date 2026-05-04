@@ -268,7 +268,7 @@ export function CustomerAgreementsScreen() {
     const validToIndex = findColumnIndex(headers, ['bitis', 'gecerlilik bitis', 'valid to']);
 
     if (codeIndex === -1 || invoicedIndex === -1 || whiteIndex === -1) {
-      throw new Error('Mikro kod, faturali fiyat ve beyaz fiyat kolonlari zorunludur.');
+      throw new Error('ERP kod, faturali fiyat ve beyaz fiyat kolonlari zorunludur.');
     }
 
     const rows: AgreementImportRow[] = [];
@@ -322,7 +322,7 @@ export function CustomerAgreementsScreen() {
       return;
     }
     const rows = [
-      ['Mikro Kod', 'Faturali Fiyat', 'Beyaz Fiyat', 'Min Miktar', 'Baslangic', 'Bitis'],
+      ['ERP Kod', 'Faturali Fiyat', 'Beyaz Fiyat', 'Min Miktar', 'Baslangic', 'Bitis'],
       ['B101996', '86,69', '76,61', '1', buildDefaultDate(), ''],
     ];
     const worksheet = XLSX.utils.aoa_to_sheet(rows);

@@ -222,7 +222,7 @@ export function QuoteDetailScreen() {
             {quote.mikroNumber && (
               <TouchableOpacity style={styles.secondaryWideButton} onPress={syncQuote} disabled={syncing}>
                 <Text style={styles.secondaryButtonText}>
-                  {syncing ? 'Guncelleniyor...' : 'Mikrodan Guncelle'}
+                  {syncing ? 'Guncelleniyor...' : "ERP'den Guncelle"}
                 </Text>
               </TouchableOpacity>
             )}

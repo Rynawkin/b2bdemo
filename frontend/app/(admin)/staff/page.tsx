@@ -224,7 +224,7 @@ export default function StaffManagementPage() {
                 type="email"
                 value={createForm.email}
                 onChange={(e) => setCreateForm({ ...createForm, email: e.target.value })}
-                placeholder="ahmet@bakircilar.com"
+                placeholder="ahmet@otoolgun.com"
               />
               <Input
                 label="Şifre"

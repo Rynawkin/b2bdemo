@@ -1,4 +1,4 @@
-# Bakırcılar Grup B2B Frontend
+# OtoOlgun B2B Frontend
 
 Next.js 15 + React 19 + TailwindCSS + Zustand
 
@@ -161,7 +161,7 @@ npm run lint
 
 - Backend'in çalıştığından emin olun (`http://localhost:5000`)
 - İlk login için admin hesabı oluşturun (backend'de)
-- Mock Mikro kullanıyorsanız, sync çalıştırın
+- Mock ERP kullanıyorsanız, sync çalıştırın
 
 ## 🆘 Sorun Giderme
 

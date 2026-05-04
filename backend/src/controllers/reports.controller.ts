@@ -1,7 +1,7 @@
 /**
  * Raporlar Controller
  *
- * Mikro ERP raporlarını yöneten controller
+ * ERP raporlarını yöneten controller
  */
 
 import { Request, Response } from 'express';

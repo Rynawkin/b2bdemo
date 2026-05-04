@@ -296,7 +296,7 @@ export default function AdminProductsPage() {
   const getImageSyncErrorLabel = (value?: string | null) => {
     switch (value) {
       case 'NO_IMAGE':
-        return 'Mikro resim yok';
+        return 'ERP resim yok';
       case 'NO_GUID':
         return 'GUID yok';
       case 'IMAGE_TOO_LARGE':
@@ -449,7 +449,7 @@ export default function AdminProductsPage() {
               {/* Price List Filter */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Mikro Satış Fiyatı
+                  ERP Satış Fiyatı
                 </label>
                 <select
                   value={priceListStatus}
@@ -474,7 +474,7 @@ export default function AdminProductsPage() {
                     className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
                   >
                     <option value="name">İsim</option>
-                    <option value="mikroCode">Mikro Kod</option>
+                    <option value="mikroCode">ERP Kod</option>
                     <option value="excessStock">Fazla Stok</option>
                     <option value="totalStock">Toplam Stok</option>
                     <option value="lastEntryDate">Son Giriş Tarihi</option>
@@ -574,7 +574,7 @@ export default function AdminProductsPage() {
                     onClick={() => handleSort('mikroCode')}
                   >
                     <div className="flex items-center gap-1">
-                      Mikro Kod
+                      ERP Kod
                       {sortBy === 'mikroCode' && <span>{sortOrder === 'asc' ? '↑' : '↓'}</span>}
                     </div>
                   </th>

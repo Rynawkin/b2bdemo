@@ -147,7 +147,7 @@ export default function StockSearchPage() {
             Stok Arama
           </h1>
           <p className="text-gray-600">
-            Stok F10 - Mikro ERP entegrasyonu ile detaylı stok bilgileri
+            Stok F10 - ERP entegrasyonu ile detaylı stok bilgileri
           </p>
         </div>
 

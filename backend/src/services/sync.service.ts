@@ -1,7 +1,7 @@
 /**
  * Sync Service
  *
- * Mikro ERP'den veri çekip PostgreSQL'e senkronize eder:
+ * ERP'den veri çekip PostgreSQL'e senkronize eder:
  * 1. Kategorileri sync
  * 2. Ürünleri sync
  * 3. Stokları güncelle
@@ -185,7 +185,7 @@ class SyncService {
   }
 
   /**
-   * Kategorileri Mikro'dan çek ve sync et
+   * Kategorileri ERP'den çek ve sync et
    */
   private async syncCategories(): Promise<number> {
     const mikroCategories = await mikroService.getCategories();
@@ -212,7 +212,7 @@ class SyncService {
   }
 
   /**
-   * Ürünleri Mikro'dan çek ve sync et
+   * Ürünleri ERP'den çek ve sync et
    */
   private async syncProducts(): Promise<number> {
     const [mikroProducts, salesHistory, pendingOrdersByWarehouse] = await Promise.all([
@@ -221,7 +221,7 @@ class SyncService {
       mikroService.getPendingOrdersByWarehouse(),
     ]);
 
-    console.log(`📊 Mikro'dan ${mikroProducts.length} ürün çekildi`);
+    console.log(`📊 ERP'den ${mikroProducts.length} ürün çekildi`);
 
     if (mikroProducts.length > 0) {
       const mikroCodes = mikroProducts.map((product) => product.code);
@@ -369,7 +369,7 @@ class SyncService {
       throw new Error('Product not found');
     }
 
-    // Mikro'dan güncel veriyi çek
+    // ERP'den güncel veriyi çek
     const [warehouseStocks] = await Promise.all([
       mikroService.getWarehouseStocks(),
     ]);

@@ -190,7 +190,7 @@ export default function PriceHistoryPage() {
                 Fiyat Geçmişi Raporu
               </h1>
               <p className="text-gray-500 mt-1">
-                Mikro ERP fiyat değişiklikleri ve tutarlılık kontrolü
+                ERP fiyat değişiklikleri ve tutarlılık kontrolü
               </p>
             </div>
           </div>

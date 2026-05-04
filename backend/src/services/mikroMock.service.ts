@@ -1,7 +1,7 @@
 /**
- * Mock Mikro ERP Service
+ * Mock ERP Service
  *
- * Gerçek Mikro ERP bağlantısı olmadan geliştirme yapmak için
+ * Gerçek ERP bağlantısı olmadan geliştirme yapmak için
  * mock data sağlar. Production'da USE_MOCK_MIKRO=false olacak.
  */
 
@@ -17,7 +17,7 @@ import {
 
 export class MikroMockService {
   /**
-   * Mikro KDV kod → yüzde dönüşümü
+   * ERP KDV kod → yüzde dönüşümü
    * Real service ile aynı
    */
   public convertVatCodeToRate(vatCode: number): number {
@@ -601,7 +601,7 @@ export class MikroMockService {
   }
 
   /**
-   * Mock Mikro'ya sipariş yazma
+   * Mock ERP'ya sipariş yazma
    * Gerçekte Mikro'nun sipariş tablosuna INSERT yapacak
    */
   async writeOrder(orderData: {
@@ -638,10 +638,10 @@ export class MikroMockService {
 
   /**
    * Mock cari hesap kontrolü ve oluşturma
-   * Gerçek sistemde Mikro'ya cari kaydı yazacak
+   * Gerçek sistemde ERP'ye cari kaydı yazacak
    */
   /**
-   * Mock Mikro'ya teklif yazma
+   * Mock ERP'ya teklif yazma
    */
   async hasOrdersForQuote(_params: { evrakSeri: string; evrakSira: number }): Promise<boolean> {
     return false;
@@ -785,7 +785,7 @@ export class MikroMockService {
    * Mock bağlantı testi
    */
   async testConnection(): Promise<boolean> {
-    console.log('✅ [MOCK] Mikro bağlantısı simüle edildi');
+    console.log('✅ [MOCK] ERP bağlantısı simüle edildi');
     return true;
   }
 

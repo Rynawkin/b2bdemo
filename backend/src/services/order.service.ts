@@ -5,7 +5,7 @@
  * - Sepetten sipariş oluşturma
  * - Stok kontrolü
  * - Admin onayı
- * - Mikro'ya sipariş yazma (2 ayrı sipariş mantığı ile)
+ * - ERP'ye sipariş yazma (2 ayrı sipariş mantığı ile)
  */
 
 import { PriceType } from '@prisma/client';
@@ -472,7 +472,7 @@ class OrderService {
     });
 
     if (!customer || !customer.mikroCariCode) {
-      throw new Error('Customer not found or missing Mikro cari code');
+      throw new Error('Customer not found or missing ERP cari code');
     }
 
     await mikroService.ensureCariExists({
@@ -1009,12 +1009,12 @@ class OrderService {
 
       if (extraItems.length > 0) {
         if (!order.user?.mikroCariCode) {
-          throw new Error('Customer Mikro code missing for approved order update');
+          throw new Error('Customer ERP code missing for approved order update');
         }
 
         const fallbackMikroOrderId = String(order.mikroOrderIds?.[0] || '').trim();
         if (!fallbackMikroOrderId) {
-          throw new Error('Existing Mikro order number missing for approved order update');
+          throw new Error('Existing ERP order number missing for approved order update');
         }
 
         const baseMikroOrderByPriceType = new Map<PriceType, string>();
@@ -1039,7 +1039,7 @@ class OrderService {
           const baseMikroOrderId = baseMikroOrderByPriceType.get(priceType) || fallbackMikroOrderId;
           const parsedBaseOrder = this.parseMikroOrderNumber(baseMikroOrderId);
           if (!parsedBaseOrder?.series) {
-            throw new Error('Cannot determine Mikro order series for approved order update');
+            throw new Error('Cannot determine ERP order series for approved order update');
           }
 
           const warehouseNo = await this.getWarehouseNoFromMikroOrder(baseMikroOrderId);
@@ -1180,7 +1180,7 @@ class OrderService {
 
 
   /**
-   * Siparişi onayla ve Mikro'ya yaz
+   * Siparişi onayla ve ERP'ye yaz
    *
    * KRİTİK: Faturalı ve beyaz ürünler için 2 AYRI sipariş yazılır!
    */
@@ -1199,7 +1199,7 @@ class OrderService {
     }
 
     if (!order.user.mikroCariCode) {
-      throw new Error('User does not have Mikro cari code');
+      throw new Error('User does not have ERP cari code');
     }
 
     // Siparişi faturalı ve beyaz olarak ayır
@@ -1310,7 +1310,7 @@ class OrderService {
     }
 
     if (!order.user.mikroCariCode) {
-      throw new Error('User does not have Mikro cari code');
+      throw new Error('User does not have ERP cari code');
     }
 
     // Onaylanacak kalemleri getir

@@ -404,7 +404,7 @@ app.listen(PORT, () => {
   console.log('');
   console.log(`📡 Server running on: http://localhost:${PORT}`);
   console.log(`🌍 Environment: ${config.nodeEnv}`);
-  console.log(`🎭 Mock Mikro: ${config.useMockMikro ? 'ENABLED' : 'DISABLED'}`);
+  console.log(`🎭 Mock ERP: ${config.useMockMikro ? 'ENABLED' : 'DISABLED'}`);
   console.log(`⏰ Cron Jobs: ${config.enableCron ? 'ENABLED' : 'DISABLED'}`);
   console.log('');
   console.log('📚 API Documentation:');

@@ -3,11 +3,11 @@ version: '3.8'
 services:
   postgres:
     image: postgres:15
-    container_name: mikrob2b-postgres
+    container_name: otoolgunb2b-postgres
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: mikrob2b
+      POSTGRES_DB: otoolgunb2b
     ports:
       - "5432:5432"
     volumes:

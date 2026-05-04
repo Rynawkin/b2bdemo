@@ -2280,10 +2280,10 @@ function AdminQuoteNewPageContent() {
             </h1>
             <p className="text-sm text-gray-600">
               {isOrderMode
-                ? (isOrderEditMode ? 'Mevcut siparis kalemleri guncellenir' : 'Mikro satis siparisi yazilir')
+                ? (isOrderEditMode ? 'Mevcut siparis kalemleri guncellenir' : 'ERP satis siparisi yazilir')
                 : isEditMode
-                  ? 'Mikro teklif guncellenir'
-                  : 'Mikro teklif fisine aktarilir'}
+                  ? 'ERP teklif guncellenir'
+                  : 'ERP teklif fisine aktarilir'}
             </p>
           </div>
           <Button variant="secondary" onClick={() => router.push(isOrderMode ? '/orders' : '/quotes')}>
@@ -2375,7 +2375,7 @@ function AdminQuoteNewPageContent() {
                   ))}
                 </select>
                 <p className="mt-1 text-xs text-gray-500">
-                  Secilen sorumlu Mikro teklifinde kullanilir. Kaydetmek icin "Tercihleri Kaydet" deyin.
+                  Secilen sorumlu ERP teklifinde kullanilir. Kaydetmek icin "Tercihleri Kaydet" deyin.
                 </p>
               </div>
             </div>
@@ -2548,8 +2548,8 @@ function AdminQuoteNewPageContent() {
                     />
                     <p className="mt-1 text-xs text-gray-500">
                       {isOrderMode
-                        ? "Not, Mikro'da aciklama alanina yazilir."
-                        : "Not, Mikro'da belge no alanina da yazilir."}
+                        ? "Not, ERP'de aciklama alanina yazilir."
+                        : "Not, ERP'de belge no alanina da yazilir."}
                     </p>
                   </div>
                 </div>

@@ -2660,7 +2660,7 @@ export default function UcarerDepotReportPage() {
             </Link>
             <div>
               <h1 className="text-2xl font-bold text-gray-900">Ucarer Depo ve MinMax Modulu</h1>
-              <p className="text-sm text-gray-600">Mikro SQL raporlarinin B2B icinde calistirilan surumu</p>
+              <p className="text-sm text-gray-600">ERP SQL raporlarinin B2B icinde calistirilan surumu</p>
             </div>
           </div>
         </div>
@@ -3830,7 +3830,7 @@ export default function UcarerDepotReportPage() {
                   </tbody>
                 </table>
                 <datalist id="ucarer-delivery-type-list">
-                  <option value="B">B-Bakircilar Sevk</option>
+                  <option value="B">B-OtoOlgun Sevk</option>
                   <option value="N">N-Nama Sevk</option>
                 </datalist>
               </div>

@@ -1,7 +1,7 @@
 /**
  * Cari Sync Service
  *
- * Mikro ERP'den cari bilgilerini çekip PostgreSQL'e senkronize eder
+ * ERP'den cari bilgilerini çekip PostgreSQL'e senkronize eder
  */
 
 import { prisma } from '../utils/prisma';
@@ -104,7 +104,7 @@ class CariSyncService {
     try {
       console.log('🔄 Cari bilgileri Mikro\'dan çekiliyor...');
 
-      // Mikro'dan cari bilgilerini çek
+      // ERP'den cari bilgilerini çek
       const mikroCaris = await mikroService.getCariDetails();
       console.log(`✅ ${mikroCaris.length} cari bilgisi çekildi`);
 

@@ -1033,7 +1033,7 @@ export class AdminController {
             lastPriceMinCostPercent: true,
             active: true,
           createdAt: true,
-          // Mikro ERP fields
+          // ERP fields
           city: true,
           district: true,
           phone: true,
@@ -1076,7 +1076,7 @@ export class AdminController {
       }
 
       if (isSalesRep && !mikroCariCode) {
-        return res.status(400).json({ error: 'Mikro cari code is required' });
+        return res.status(400).json({ error: 'ERP cari code is required' });
       }
 
       // Email kontrolü
@@ -1090,21 +1090,21 @@ export class AdminController {
         }
       }
 
-      // Mikro cari kodu kontrolü
+      // ERP cari kodu kontrolü
       if (mikroCariCode) {
         const existingCari = await prisma.user.findUnique({
           where: { mikroCariCode },
         });
 
         if (existingCari) {
-          return res.status(400).json({ error: 'Mikro cari code already exists' });
+          return res.status(400).json({ error: 'ERP cari code already exists' });
         }
       }
 
       // Şifreyi hashle
       const hashedPassword = await hashPassword(password);
 
-      // Mikro'dan cari bilgilerini çek
+      // ERP'den cari bilgilerini çek
       let mikroCariData = {};
       if (mikroCariCode) {
         try {
@@ -1113,7 +1113,7 @@ export class AdminController {
 
           if (isSalesRep) {
             if (!cari) {
-              return res.status(400).json({ error: 'Mikro cari not found' });
+              return res.status(400).json({ error: 'ERP cari not found' });
             }
             if (!cari.sectorCode || !assignedSectorCodes.includes(cari.sectorCode)) {
               return res.status(403).json({ error: 'You can only create customers from your assigned sectors' });
@@ -1137,7 +1137,7 @@ export class AdminController {
             };
           }
         } catch (error) {
-          console.error('Mikro cari bilgileri çekilirken hata:', error);
+          console.error('ERP cari bilgileri çekilirken hata:', error);
           // Hata olsa bile devam et, sadece Mikro alanları boş kalır
         }
       }
@@ -2719,7 +2719,7 @@ export class AdminController {
 
   /**
    * GET /api/admin/sector-codes
-   * Get all unique sector codes from Mikro cari list
+   * Get all unique sector codes from ERP cari list
    */
   async getSectorCodes(req: Request, res: Response, next: NextFunction) {
     try {
@@ -2941,7 +2941,7 @@ export class AdminController {
 
       if (!productGuid) {
         await imageService.removeLocalFile(processedImage.filePath);
-        return res.status(500).json({ error: 'Mikro GUID bulunamadi' });
+        return res.status(500).json({ error: 'ERP GUID bulunamadi' });
       }
 
       await imageService.uploadImageToMikro(productGuid, processedImage.buffer);
@@ -3004,11 +3004,11 @@ export class AdminController {
 
   /**
    * GET /api/admin/caris/available
-   * Mikro'daki carileri listele (henüz kullanıcı oluşturulmamış olanlar)
+   * ERP'deki carileri listele (henüz kullanıcı oluşturulmamış olanlar)
    */
   async getAvailableCaris(req: Request, res: Response, next: NextFunction) {
     try {
-      // Mikro'dan tüm cari detaylarını çek
+      // ERP'den tüm cari detaylarını çek
       const mikroCaris = await mikroService.getCariDetails();
 
       // Sistemde zaten olan kullanıcıların cari kodlarını al
@@ -3056,7 +3056,7 @@ export class AdminController {
         });
       }
 
-      // Mikro'dan cari detaylarını çek
+      // ERP'den cari detaylarını çek
       const mikroCaris = await mikroService.getCariDetails();
       const cariMap = new Map(mikroCaris.map(c => [c.code, c]));
 
@@ -3291,7 +3291,7 @@ export class AdminController {
 
   /**
    * POST /api/admin/price-sync
-   * Fiyat değişikliklerini Mikro'dan PostgreSQL'e senkronize eder
+   * Fiyat değişikliklerini ERP'den PostgreSQL'e senkronize eder
    */
   async syncPriceChanges(req: Request, res: Response, next: NextFunction) {
     try {

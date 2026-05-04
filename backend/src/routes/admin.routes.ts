@@ -34,7 +34,7 @@ const createCustomerSchema = z.object({
   password: z.string().min(6, 'Password must be at least 6 characters'),
   name: z.string().min(1, 'Name is required'),
   customerType: z.enum(['BAYI', 'PERAKENDE', 'VIP', 'OZEL']),
-  mikroCariCode: z.string().min(1, 'Mikro cari code is required'),
+  mikroCariCode: z.string().min(1, 'ERP cari code is required'),
   priceVisibility: z.enum(['INVOICED_ONLY', 'WHITE_ONLY', 'BOTH']).optional(),
 });
 
@@ -445,7 +445,7 @@ router.get('/staff', requirePermission('admin:staff'), adminController.getStaffM
 router.post('/staff', requirePermission('admin:staff'), adminController.createStaffMember);
 router.put('/staff/:id', requirePermission('admin:staff'), adminController.updateStaffMember);
 
-// Bulk user creation from Mikro caris
+// Bulk user creation from ERP caris
 router.get('/caris/available', requirePermission('admin:staff'), adminController.getAvailableCaris);
 router.post('/users/bulk-create', requirePermission('admin:staff'), adminController.bulkCreateUsers);
 

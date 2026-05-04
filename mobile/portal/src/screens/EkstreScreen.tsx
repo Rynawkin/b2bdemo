@@ -147,7 +147,7 @@ export function EkstreScreen() {
         })
         .join('');
 
-      const apiBase = process.env.EXPO_PUBLIC_API_BASE_URL || 'https://www.bakircilarkampanya.com/api';
+      const apiBase = process.env.EXPO_PUBLIC_API_BASE_URL || 'https://www.otoolgun.com/api';
       const webBase = apiBase.replace(/\/api\/?$/, '');
       const logoUrl = `${webBase}/quote-logo.png`;
 
@@ -205,7 +205,7 @@ export function EkstreScreen() {
           </head>
           <body>
             <div class="header">
-              <img src="${logoUrl}" alt="Bakircilar Logo" />
+              <img src="${logoUrl}" alt="OtoOlgun Logo" />
             </div>
             <div class="info">
               <div class="box">
@@ -251,11 +251,11 @@ export function EkstreScreen() {
               </div>
             </div>
             <div class="footer">
-              <div>BAKIRCILAR AMBALAJ END.-TEM VE KIRTASIYE</div>
+              <div>OTOOLGUN</div>
               <div>MERKEZ: RASIMPASA MAH. ATATURK BLV. NO:69/A HENDEK/SAKARYA</div>
               <div>SUBE 1: TOPCA TOPTANCILAR CARSISI A BLOK NO: 20 - ERENLER/SAKARYA</div>
-              <div>TEL: 0264 614 67 77  FAX: 0264 614 66 60 - info@bakircilarambalaj.com</div>
-              <div>www.bakircilargrup.com</div>
+              <div>TEL: 0264 614 67 77  FAX: 0264 614 66 60 - info@otoolgun.com</div>
+              <div>www.otoolgun.com</div>
             </div>
           </body>
         </html>
@@ -414,7 +414,7 @@ export function EkstreScreen() {
         ListHeaderComponent={
           <View style={styles.header}>
             <Text style={styles.title}>Cari Ekstre</Text>
-            <Text style={styles.subtitle}>Mikro hareket foyi listesi.</Text>
+            <Text style={styles.subtitle}>ERP hareket foyi listesi.</Text>
 
             <View style={styles.searchRow}>
               <TextInput

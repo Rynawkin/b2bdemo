@@ -23,7 +23,7 @@ export function Logo({ variant = 'dark', size = 'md' }: LogoProps) {
     <div className={`flex items-center gap-3`}>
       <Image
         src={tenant.branding.logoPath || '/logo.png'}
-        alt="Bakırcılar Logo"
+        alt="OtoOlgun Logo"
         width={currentSize.height * 2.5}
         height={currentSize.height}
         className="object-contain"

@@ -1,7 +1,7 @@
 /**
- * Mikro Service Factory
+ * ERP Service Factory
  *
- * Development'ta mock, production'da gerçek Mikro service kullanır
+ * Development'ta mock, production'da gerçek ERP service kullanır
  */
 
 import { config } from '../config';
@@ -13,10 +13,10 @@ import mikroRealService from './mikro.service';
  */
 const getMikroService = (): typeof mikroMockService | typeof mikroRealService => {
   if (config.useMockMikro) {
-    console.log('🎭 Mock Mikro Service kullanılıyor');
+    console.log('🎭 Mock ERP Service kullanılıyor');
     return mikroMockService;
   } else {
-    console.log('🔗 Gerçek Mikro Service kullanılıyor');
+    console.log('🔗 Gerçek ERP Service kullanılıyor');
     return mikroRealService;
   }
 };

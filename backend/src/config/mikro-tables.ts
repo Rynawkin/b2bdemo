@@ -1,7 +1,7 @@
 /**
- * Mikro ERP Tablo İsimleri
+ * ERP Tablo İsimleri
  *
- * Gerçek Mikro ERP Database: MikroDB_V16_BKRC2020
+ * Gerçek ERP Database: MikroDB_V16_BKRC2020
  * Tablo ve kolon isimleri SQL Server'dan sorgulanarak belirlendi.
  */
 

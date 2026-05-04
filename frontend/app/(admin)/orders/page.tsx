@@ -248,7 +248,7 @@ export default function AdminOrdersPage() {
         `Siparis No: ${order.orderNumber}`,
         `Belge No: ${order.customerOrderNumber || '-'}`,
         `Olusturan: ${creatorName}`,
-        order.mikroOrderIds && order.mikroOrderIds.length > 0 ? `Mikro: ${order.mikroOrderIds.join(', ')}` : 'Mikro: -',
+        order.mikroOrderIds && order.mikroOrderIds.length > 0 ? `ERP: ${order.mikroOrderIds.join(', ')}` : 'ERP: -',
       ],
       rightBoxX + 4,
       infoY + 12,
@@ -321,7 +321,7 @@ export default function AdminOrdersPage() {
         headerRows.push(['Musteri Siparis No', order.customerOrderNumber]);
       }
       if (order.mikroOrderIds && order.mikroOrderIds.length > 0) {
-        headerRows.push(['Mikro', order.mikroOrderIds.join(', ')]);
+        headerRows.push(['ERP', order.mikroOrderIds.join(', ')]);
       }
 
       const tableHeader = ['Urun Kodu', 'Urun Adi', 'Miktar', 'Birim Fiyat', 'Toplam', 'Tip', 'Not'];
@@ -449,7 +449,7 @@ export default function AdminOrdersPage() {
         invoicedSeries: result.invoicedSeries,
         whiteSeries: result.whiteSeries,
       });
-      toast.success('Sipariş onaylandı ve Mikro\'ya gönderildi! ✅');
+      toast.success('Sipariş onaylandı ve ERP\'ye gönderildi! ✅');
       fetchOrders();
     } catch (error: any) {
       toast.error(error.response?.data?.error || 'Onaylama başarısız');
@@ -736,7 +736,7 @@ export default function AdminOrdersPage() {
                       <div className="mt-2 flex flex-wrap gap-2">
                         {order.mikroOrderIds.map((mikroId, idx) => (
                           <div key={idx} className="flex items-center gap-1 bg-blue-50 border border-blue-200 rounded px-2 py-1">
-                            <span className="text-xs font-medium text-blue-700">Mikro ID:</span>
+                            <span className="text-xs font-medium text-blue-700">ERP ID:</span>
                             <span className="text-xs font-mono font-bold text-blue-900">{mikroId}</span>
                           </div>
                         ))}
@@ -814,7 +814,7 @@ export default function AdminOrdersPage() {
                   {order.status === 'PENDING' && (
                     <>
                       <Button variant="primary" onClick={() => handleApprove(order.id)}>
-                        Onayla ve Mikro'ya Gonder
+                        Onayla ve ERP'ye Gonder
                       </Button>
                       <Button variant="danger" onClick={() => handleReject(order.id)}>
                         Reddet

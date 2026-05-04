@@ -206,7 +206,7 @@ export default function VadePage() {
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div>
             <h1 className="text-2xl font-semibold">Vade Takip</h1>
-            <p className="text-sm text-muted-foreground">Mikro kaynakli vade ve alacak listesi</p>
+            <p className="text-sm text-muted-foreground">ERP kaynakli vade ve alacak listesi</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <Button variant="outline" onClick={() => router.push('/vade/import')}>

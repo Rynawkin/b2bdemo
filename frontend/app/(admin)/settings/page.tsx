@@ -172,7 +172,7 @@ export default function SettingsPage() {
                         <strong>1️⃣ Son Giriş Fiyatı:</strong> En son ne kadara aldık
                       </div>
                       <div className="bg-blue-50 p-3 rounded">
-                        <strong>2️⃣ Güncel Maliyet:</strong> Mikro'daki tanımlı maliyet (stok kartında kayıtlı)
+                        <strong>2️⃣ Güncel Maliyet:</strong> ERP'deki tanımlı maliyet (stok kartında kayıtlı)
                       </div>
                       <div className="bg-yellow-50 border-l-4 border-yellow-500 p-3 rounded mt-3">
                         <strong>⏰ Zamana Göre Karar:</strong>

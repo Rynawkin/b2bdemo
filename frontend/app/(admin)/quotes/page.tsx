@@ -41,7 +41,7 @@ const getStatusBadge = (status: QuoteStatus) => {
     case 'PENDING_APPROVAL':
       return <Badge variant="warning">⏳ Onay Bekliyor</Badge>;
     case 'SENT_TO_MIKRO':
-      return <Badge variant="success">✅ Mikro'ya Gönderildi</Badge>;
+      return <Badge variant="success">✅ ERP'ye Gönderildi</Badge>;
     case 'REJECTED':
       return <Badge variant="danger">❌ Reddedildi</Badge>;
     case 'CUSTOMER_ACCEPTED':
@@ -255,7 +255,7 @@ function AdminQuotesPageContent() {
 
     try {
       await adminApi.approveQuote(quoteId, note || undefined);
-      toast.success('Teklif onaylandı ve Mikro\'ya gönderildi');
+      toast.success('Teklif onaylandı ve ERP\'ye gönderildi');
       fetchQuotes();
     } catch (error: any) {
       toast.error(error.response?.data?.error || 'Onaylama başarısız');
@@ -829,11 +829,11 @@ function AdminQuotesPageContent() {
 
       const footerLineGap = 4.2;
       const footerLines = [
-        'BAKIRCILAR AMBALAJ END.-TEM VE KIRTASIYE',
+        'OTOOLGUN',
         'MERKEZ: RASIMPASA MAH. ATATURK BLV. NO:69/A HENDEK/SAKARYA',
         'SUBE 1: TOPCA TOPTANCILAR CARSISI A BLOK NO: 20 - ERENLER/SAKARYA',
-        'TEL: 0264 614 67 77  FAX: 0264 614 66 60 - info@bakircilarambalaj.com',
-        'www.bakircilargrup.com',
+        'TEL: 0264 614 67 77  FAX: 0264 614 66 60 - info@otoolgun.com',
+        'www.otoolgun.com',
       ];
       const footerHeight = footerLines.length * footerLineGap + 4;
 
@@ -1181,7 +1181,7 @@ function AdminQuotesPageContent() {
     if (payload.status) summaryLines.push(`Durum: ${payload.status}`);
     if (payload.orderNumber) summaryLines.push(`Siparis: ${payload.orderNumber}`);
     if (Array.isArray(payload.mikroOrderIds) && payload.mikroOrderIds.length > 0) {
-      summaryLines.push(`Mikro: ${payload.mikroOrderIds.join(', ')}`);
+      summaryLines.push(`ERP: ${payload.mikroOrderIds.join(', ')}`);
     }
     if (payload.itemCount) summaryLines.push(`Kalem: ${payload.itemCount}`);
     if (payload.totalAmount) summaryLines.push(`Tutar: ${formatCurrency(payload.totalAmount)}`);
@@ -1227,13 +1227,13 @@ function AdminQuotesPageContent() {
     try {
       const { updated } = await adminApi.syncQuote(quoteId);
       if (updated) {
-        toast.success('Mikro guncellendi.');
+        toast.success('ERP guncellendi.');
       } else {
-        toast.success('Mikroda degisiklik yok.');
+        toast.success("ERP'de degisiklik yok.");
       }
       fetchQuotes();
     } catch (error: any) {
-      toast.error(error.response?.data?.error || 'Mikro guncelleme basarisiz');
+      toast.error(error.response?.data?.error || 'ERP guncelleme basarisiz');
     } finally {
       setSyncingQuoteId(null);
     }
@@ -1269,7 +1269,7 @@ function AdminQuotesPageContent() {
     const hasOrders = Array.isArray(quote.orders) && quote.orders.length > 0;
     if (!quote.convertedAt && !hasOrders) return null;
     const source = quote.convertedSource || (hasOrders ? 'B2B' : undefined);
-    const sourceLabel = source === 'MIKRO' ? 'Mikro' : 'B2B';
+    const sourceLabel = source === 'MIKRO' ? 'ERP' : 'B2B';
     return <Badge variant="info">Siparis ({sourceLabel})</Badge>;
   };
 
@@ -1466,7 +1466,7 @@ function AdminQuotesPageContent() {
                       </div>
                       {quote.mikroNumber && (
                         <div className="mt-2 inline-flex items-center gap-2 rounded border border-blue-200 bg-blue-50 px-2 py-1">
-                          <span className="text-xs font-medium text-blue-700">Mikro No:</span>
+                          <span className="text-xs font-medium text-blue-700">ERP No:</span>
                           <span className="text-xs font-mono font-bold text-blue-900">{quote.mikroNumber}</span>
                         </div>
                       )}
@@ -1534,13 +1534,13 @@ function AdminQuotesPageContent() {
                         onClick={() => handleSync(quote.id)}
                         disabled={syncingQuoteId === quote.id}
                       >
-                        {syncingQuoteId === quote.id ? 'Guncelleniyor...' : 'Mikrodan Guncelle'}
+                        {syncingQuoteId === quote.id ? 'Guncelleniyor...' : "ERP'den Guncelle"}
                       </Button>
                     )}
                     {quote.status === 'PENDING_APPROVAL' && isAdmin && (
                       <>
                         <Button variant="primary" onClick={() => handleApprove(quote.id)}>
-                          Onayla ve Mikro'ya Gönder
+                          Onayla ve ERP'ye Gönder
                         </Button>
                         <Button variant="danger" onClick={() => handleReject(quote.id)}>
                           Reddet

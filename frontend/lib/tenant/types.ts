@@ -26,7 +26,7 @@ export interface TenantFeatureFlags {
 }
 
 export interface TenantIntegrationConfig {
-  erp: 'mikro';
+  erp: 'generic' | 'mikro';
   defaultCurrency: string;
   warehouse: {
     labels: Record<string, string>;

@@ -131,7 +131,7 @@ export function QuoteConvertScreen() {
   const submit = async () => {
     if (!quote) return;
     if (!quote.mikroNumber) {
-      Alert.alert('Uyari', 'Bu teklif Mikro numarasi olmadigi icin siparise cevrilemez.');
+      Alert.alert('Uyari', 'Bu teklif ERP numarasi olmadigi icin siparise cevrilemez.');
       return;
     }
     if (selectedOpenItems.length === 0) {

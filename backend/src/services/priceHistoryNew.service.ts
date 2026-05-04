@@ -1,7 +1,7 @@
 /**
  * Price History Service (New - PostgreSQL based)
  *
- * Artık Mikro ERP'ye her seferinde sorgu atmıyoruz.
+ * Artık ERP'ye her seferinde sorgu atmıyoruz.
  * PostgreSQL'deki senkronize edilmiş verileri kullanıyoruz.
  */
 

@@ -30,16 +30,16 @@ export const config = {
   jwtSecret: process.env.JWT_SECRET!,
   jwtExpiresIn: '30d', // 30 gün - Uzun sync işlemleri için
 
-  // Mikro ERP
-  useMockMikro: process.env.USE_MOCK_MIKRO === 'true',
+  // External ERP
+  useMockMikro: (process.env.USE_MOCK_ERP || process.env.USE_MOCK_MIKRO) === 'true',
   mikro: {
-    server: process.env.MIKRO_SERVER || '',
-    database: process.env.MIKRO_DATABASE || '',
-    user: process.env.MIKRO_USER || '',
-    password: process.env.MIKRO_PASSWORD || '',
-    port: parseInt(process.env.MIKRO_PORT || '1433', 10),
-    requestTimeout: parseInt(process.env.MIKRO_REQUEST_TIMEOUT_MS || '120000', 10),
-    connectionTimeout: parseInt(process.env.MIKRO_CONNECTION_TIMEOUT_MS || '30000', 10),
+    server: process.env.ERP_SERVER || process.env.MIKRO_SERVER || '',
+    database: process.env.ERP_DATABASE || process.env.MIKRO_DATABASE || '',
+    user: process.env.ERP_USER || process.env.MIKRO_USER || '',
+    password: process.env.ERP_PASSWORD || process.env.MIKRO_PASSWORD || '',
+    port: parseInt(process.env.ERP_PORT || process.env.MIKRO_PORT || '1433', 10),
+    requestTimeout: parseInt(process.env.ERP_REQUEST_TIMEOUT_MS || process.env.MIKRO_REQUEST_TIMEOUT_MS || '120000', 10),
+    connectionTimeout: parseInt(process.env.ERP_CONNECTION_TIMEOUT_MS || process.env.MIKRO_CONNECTION_TIMEOUT_MS || '30000', 10),
     options: {
       encrypt: false,
       trustServerCertificate: true,

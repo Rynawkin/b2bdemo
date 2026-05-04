@@ -46,7 +46,7 @@ export function LoginScreen() {
           <Text style={styles.label}>Kullanici Adi</Text>
           <TextInput
             style={styles.input}
-            placeholder="ad.soyad@bakircilar.com"
+            placeholder="ad.soyad@otoolgun.com"
             placeholderTextColor={colors.textMuted}
             autoCapitalize="none"
             autoCorrect={false}

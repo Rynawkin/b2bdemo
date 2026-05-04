@@ -22,7 +22,7 @@ const buildSqlSearchTokens = (value?: string) => {
 
 class CariHareketService {
   /**
-   * Cari Hareket FÃ¶yÃ¼ (041410) - Mikro'daki gibi tam detaylÄ± hareket listesi
+   * Cari Hareket FÃ¶yÃ¼ (041410) - ERP'deki gibi tam detaylÄ± hareket listesi
    */
   async getCariHareketFoyu(params: CariHareketParams): Promise<any> {
     const { cariKod, startDate, endDate } = params;

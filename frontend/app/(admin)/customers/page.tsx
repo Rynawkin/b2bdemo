@@ -246,16 +246,16 @@ export default function CustomersPage() {
           <Card title="Yeni Müşteri Ekle" className="mb-6">
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>
-                <label className="block text-sm font-medium mb-1">Mikro Cari Seç *</label>
+                <label className="block text-sm font-medium mb-1">ERP Cari Seç *</label>
                 <Button
                   type="button"
                   variant="secondary"
                   onClick={() => setShowCariModal(true)}
                   className="w-full"
                 >
-                  {formData.mikroCariCode ? `${formData.mikroCariCode} - ${formData.name}` : 'Mikro\'dan Seç'}
+                  {formData.mikroCariCode ? `${formData.mikroCariCode} - ${formData.name}` : 'ERP\'den Seç'}
                 </Button>
-                <p className="text-xs text-gray-500 mt-1">Mikro ERP'den cari seçmek için tıklayın</p>
+                <p className="text-xs text-gray-500 mt-1">ERP'den cari seçmek için tıklayın</p>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -300,7 +300,7 @@ export default function CustomersPage() {
               </div>
 
               <div className="border-t pt-4">
-                <h3 className="text-sm font-semibold text-gray-700 mb-3">📋 Mikro ERP Bilgileri (Otomatik Doldurulur)</h3>
+                <h3 className="text-sm font-semibold text-gray-700 mb-3">📋 ERP Bilgileri (Otomatik Doldurulur)</h3>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <Input
                     label="Şehir"
@@ -400,7 +400,7 @@ export default function CustomersPage() {
               </div>
 
               <Button type="submit" className="w-full" disabled={!selectedCari}>
-                {selectedCari ? 'Müşteri Oluştur' : 'Önce Mikro Cari Seçin'}
+                {selectedCari ? 'Müşteri Oluştur' : 'Önce ERP Cari Seçin'}
               </Button>
             </form>
           </Card>
@@ -456,7 +456,7 @@ export default function CustomersPage() {
                   <th className="px-4 py-3 font-medium">Ad</th>
                     <th className="px-4 py-3 font-medium">Kullanici</th>
                   <th className="px-4 py-3 font-medium">Tip</th>
-                  <th className="px-4 py-3 font-medium">Mikro Cari</th>
+                  <th className="px-4 py-3 font-medium">ERP Cari</th>
                   <th className="px-4 py-3 font-medium">Şehir</th>
                   <th className="px-4 py-3 font-medium">İlçe</th>
                   <th className="px-4 py-3 font-medium">Telefon</th>

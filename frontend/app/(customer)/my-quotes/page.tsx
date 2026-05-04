@@ -86,7 +86,7 @@ export default function MyQuotesPage() {
                     </div>
                     {quote.mikroNumber && (
                       <div className="mt-2 text-xs text-blue-700">
-                        Mikro No: {quote.mikroNumber}
+                        ERP No: {quote.mikroNumber}
                       </div>
                     )}
                   </div>

@@ -63,7 +63,7 @@ enum CustomerRequestItemStatus {
 
 enum OrderStatus {
   PENDING   // Bekliyor (admin onayı bekliyor)
-  APPROVED  // Onaylandı ve Mikro'ya yazıldı
+  APPROVED  // Onaylandı ve ERP'ye yazıldı
   REJECTED  // Reddedildi
 }
 
@@ -265,7 +265,7 @@ model User {
   email         String?       @unique // Optional: Cari kodu ile de login olunabilir
   password      String        // bcrypt hash
   name          String        // DEPRECATED: Use displayName or mikroName
-  mikroName     String?       // Mikro'dan gelen orijinal isim (değişmez)
+  mikroName     String?       // ERP'den gelen orijinal isim (değişmez)
   displayName   String?       // Kullanıcının gösterilen ismi (düzenlenebilir)
   role          UserRole      @default(CUSTOMER)
   parentCustomerId String?
@@ -275,7 +275,7 @@ model User {
 
   // Müşteri bilgileri (sadece CUSTOMER role için)
   customerType        CustomerType?
-  mikroCariCode       String?       @unique // Mikro ERP'deki cari kodu
+  mikroCariCode       String?       @unique // ERP'deki cari kodu
   vatDisplayPreference String       @default("WITHOUT_VAT") // "WITH_VAT" | "WITHOUT_VAT"
   // Optional price list overrides (use settings when null)
   invoicedPriceListNo Int?
@@ -296,7 +296,7 @@ model User {
   taskColorRules       Json?
   taskDefaultView       TaskView    @default(KANBAN)
 
-  // Mikro'dan senkronize edilen cari bilgileri
+  // ERP'den senkronize edilen cari bilgileri
   city                String?       // Şehir
   district            String?       // İlçe
   phone               String?       // Telefon
@@ -668,7 +668,7 @@ model Product {
   categoryId              String
   category                Category  @relation(fields: [categoryId], references: [id])
 
-  // Maliyet bilgileri (Mikro'dan sync)
+  // Maliyet bilgileri (ERP'den sync)
   lastEntryPrice          Float?    // Son giriş fiyatı
   lastEntryDate           DateTime? // Son giriş tarihi
   currentCost             Float?    // Güncel maliyet (tanımlı)
@@ -1020,7 +1020,7 @@ model Order {
   items           OrderItem[]
   totalAmount     Float
 
-  // Mikro'ya yazılan sipariş ID'leri
+  // ERP'ye yazılan sipariş ID'leri
   // [invoiced_siparis_id, white_siparis_id] veya sadece [invoiced] veya [white]
   mikroOrderIds   String[]      @default([])
 
@@ -1071,7 +1071,7 @@ model OrderItem {
   status          OrderItemStatus   @default(PENDING)
   rejectionReason String?           // Reddedilme sebebi
 
-  // Mikro'ya yazılan sipariş ID (item bazında)
+  // ERP'ye yazılan sipariş ID (item bazında)
   mikroOrderId    String?
 
   createdAt       DateTime          @default(now())
@@ -1462,7 +1462,7 @@ model OrderTrackingSettings {
   @@index([tenantId])
 }
 
-// Mikro'dan çekilen bekleyen siparişler (cache)
+// ERP'den çekilen bekleyen siparişler (cache)
 model PendingMikroOrder {
   id                    String    @id @default(uuid())
   tenantId              String?
@@ -1475,7 +1475,7 @@ model PendingMikroOrder {
   // Müşteri bilgileri
   customerCode          String    // "120.05.125"
   customerName          String    // "ÇAMSAN ENTEGRE..."
-  customerEmail         String?   // Mikro'dan gelen email (cari_EMail)
+  customerEmail         String?   // ERP'den gelen email (cari_EMail)
   sectorCode            String?   // Sektör kodu (örn: "satıcı" = tedarikçi)
 
   // Tarihler

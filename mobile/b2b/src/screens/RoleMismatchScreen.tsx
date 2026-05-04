@@ -7,7 +7,7 @@ export function RoleMismatchScreen({ onSignOut }: { onSignOut: () => void }) {
     <SafeAreaView style={styles.safeArea}>
       <View style={styles.container}>
         <Text style={styles.title}>Bu uygulama sadece musteriler icindir.</Text>
-        <Text style={styles.body}>Personel erisimleri icin Bakircilar Portal uygulamasini kullanin.</Text>
+        <Text style={styles.body}>Personel erisimleri icin OtoOlgun Portal uygulamasini kullanin.</Text>
         <TouchableOpacity style={styles.button} onPress={onSignOut}>
           <Text style={styles.buttonText}>Cikis Yap</Text>
         </TouchableOpacity>

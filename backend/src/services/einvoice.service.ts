@@ -435,7 +435,7 @@ class EInvoiceService {
 
     if (!metadata) {
       matchStatus = EInvoiceMatchStatus.NOT_FOUND;
-      matchError = 'Mikro match not found';
+      matchError = 'ERP match not found';
     }
 
     let totals: { subtotal?: number | null; total?: number | null; currency?: string | null; issueDate?: Date | null } | null = null;

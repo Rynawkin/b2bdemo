@@ -439,7 +439,7 @@ export class CustomerController {
       lap('exclusions');
 
       if (isPurchased && !customer.mikroCariCode) {
-        return res.status(400).json({ error: 'User has no Mikro cari code' });
+        return res.status(400).json({ error: 'User has no ERP cari code' });
       }
 
       let purchasedCodes: string[] = [];

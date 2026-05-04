@@ -111,7 +111,7 @@ export default function QuoteDetailPage() {
                   <div className="text-sm text-gray-600">Olusturma: {formatDate(quote.createdAt)}</div>
                   <div className="text-sm text-gray-600">Gecerlilik: {formatDate(quote.validityDate)}</div>
                   {quote.mikroNumber && (
-                    <div className="mt-2 text-xs text-blue-700">Mikro No: {quote.mikroNumber}</div>
+                    <div className="mt-2 text-xs text-blue-700">ERP No: {quote.mikroNumber}</div>
                   )}
                   {quote.adminNote && (
                     <div className="mt-3 bg-yellow-50 border-l-4 border-yellow-400 p-3 rounded-lg">

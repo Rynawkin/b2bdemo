@@ -1,7 +1,7 @@
 ﻿/**
  * Order Tracking Service
  *
- * Mikro'dan bekleyen mÃ¼ÅŸteri sipariÅŸlerini Ã§eker,
+ * ERP'den bekleyen mÃ¼ÅŸteri sipariÅŸlerini Ã§eker,
  * PostgreSQL'e kaydeder ve mÃ¼ÅŸterilere mail gÃ¶nderir.
  */
 
@@ -113,7 +113,7 @@ class OrderTrackingService {
   }
 
   /**
-   * Mikro'dan bekleyen sipariÅŸleri Ã§ek ve PostgreSQL'e kaydet
+   * ERP'den bekleyen sipariÅŸleri Ã§ek ve PostgreSQL'e kaydet
    */
   async syncPendingOrders(): Promise<{
     success: boolean;
@@ -124,7 +124,7 @@ class OrderTrackingService {
     try {
       console.log('ğŸ”„ Bekleyen sipariÅŸler sync baÅŸladÄ±...');
 
-      // 1. Mikro'dan bekleyen sipariÅŸleri Ã§ek
+      // 1. ERP'den bekleyen sipariÅŸleri Ã§ek
       const pendingOrders = await this.fetchPendingOrdersFromMikro();
       console.log(`âœ… ${pendingOrders.length} adet bekleyen sipariÅŸ satÄ±rÄ± Ã§ekildi`);
 
@@ -225,7 +225,7 @@ class OrderTrackingService {
   }
 
   /**
-   * Mikro'dan bekleyen sipariÅŸleri Ã§ek (ham veri)
+   * ERP'den bekleyen sipariÅŸleri Ã§ek (ham veri)
    */
   private async fetchPendingOrdersFromMikro(): Promise<any[]> {
     // Ä°ki aÅŸamalÄ± yaklaÅŸÄ±m:
@@ -291,7 +291,7 @@ class OrderTrackingService {
   }
 
   /**
-   * Mikro'dan tedarikçilere verilen (satın alma) açık siparişleri çek
+   * ERP'den tedarikçilere verilen (satın alma) açık siparişleri çek
    * sip_tip = 1
    */
   private async fetchSupplierOrdersFromMikro(): Promise<any[]> {

@@ -1,7 +1,7 @@
 {
-  "name": "mikro-b2b-backend",
+  "name": "otoolgun-b2b-backend",
   "version": "1.0.0",
-  "description": "B2B Order System Backend with Mikro ERP Integration",
+  "description": "B2B Order System Backend with ERP Integration",
   "main": "dist/index.js",
   "scripts": {
     "dev": "nodemon src/index.ts",

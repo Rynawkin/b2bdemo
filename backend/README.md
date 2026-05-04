@@ -1,6 +1,6 @@
-# Mikro B2B Backend
+# OtoOlgun B2B Backend
 
-B2B sipariş sistemi backend API - Mikro ERP entegrasyonu ile
+B2B sipariş sistemi backend API - ERP entegrasyonu ile
 
 ## 🚀 Kurulum
 
@@ -14,11 +14,11 @@ npm install
 
 ```bash
 # PostgreSQL'de database oluştur
-createdb mikrob2b
+createdb otoolgunb2b
 
 # Veya psql ile:
 psql -U postgres
-CREATE DATABASE mikrob2b;
+CREATE DATABASE otoolgunb2b;
 \q
 ```
 
@@ -27,9 +27,9 @@ CREATE DATABASE mikrob2b;
 `.env` dosyasını düzenle:
 
 ```env
-DATABASE_URL="postgresql://postgres:postgres@localhost:5432/mikrob2b?schema=public"
+DATABASE_URL="postgresql://postgres:postgres@localhost:5432/otoolgunb2b?schema=public"
 JWT_SECRET=your-secret-key
-USE_MOCK_MIKRO=true  # Development için true
+USE_MOCK_ERP=true  # Development için true
 ```
 
 ### 4. Prisma Migration
@@ -76,8 +76,8 @@ src/
 ├── prisma/          # Prisma schema
 ├── routes/          # API routes
 ├── services/        # İş mantığı
-│   ├── mikroMock.service.ts     # Mock Mikro (dev)
-│   ├── mikro.service.ts         # Gerçek Mikro (prod)
+│   ├── mikroMock.service.ts     # Mock ERP (dev)
+│   ├── mikro.service.ts         # Gerçek ERP (prod)
 │   ├── mikroFactory.service.ts  # Factory pattern
 │   ├── pricing.service.ts       # Fiyatlandırma
 │   └── sync.service.ts          # Senkronizasyon
@@ -86,12 +86,12 @@ src/
 └── index.ts         # Ana giriş
 ```
 
-## 🔧 Mock Mikro Kullanımı
+## 🔧 Mock ERP Kullanımı
 
-Development'ta gerçek Mikro ERP'ye bağlanmadan çalışmak için:
+Development'ta gerçek ERP'ye bağlanmadan çalışmak için:
 
 ```env
-USE_MOCK_MIKRO=true
+USE_MOCK_ERP=true
 ```
 
 Mock service gerçekçi test verileri sağlar:
@@ -101,16 +101,16 @@ Mock service gerçekçi test verileri sağlar:
 - Satış geçmişi
 - Bekleyen siparişler
 
-## 🔌 Gerçek Mikro Bağlantısı
+## 🔌 Gerçek ERP Bağlantısı
 
 Production'da:
 
 ```env
-USE_MOCK_MIKRO=false
-MIKRO_SERVER=your-server-ip
-MIKRO_DATABASE=your-db-name
-MIKRO_USER=your-username
-MIKRO_PASSWORD=your-password
+USE_MOCK_ERP=false
+ERP_SERVER=your-server-ip
+ERP_DATABASE=your-db-name
+ERP_USER=your-username
+ERP_PASSWORD=your-password
 ```
 
 ## 📊 API Endpoints
@@ -182,9 +182,9 @@ POST /api/admin/sync
 
 ### Senkronizasyon Adımları
 
-1. Kategorileri çek (Mikro'dan)
-2. Ürünleri çek (Mikro'dan)
-3. Stokları çek (Mikro'dan)
+1. Kategorileri çek (ERP'den)
+2. Ürünleri çek (ERP'den)
+3. Stokları çek (ERP'den)
 4. Satış geçmişini çek (son 6 ay)
 5. Bekleyen siparişleri çek
 6. Fazla stok hesapla

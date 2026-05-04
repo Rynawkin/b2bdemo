@@ -262,7 +262,7 @@ export function ProductDetailModal({
               <h2 className="text-2xl font-bold text-gray-900 mb-2">{product.name}</h2>
               <div className="grid grid-cols-2 gap-3 text-sm">
                 <div>
-                  <span className="text-gray-600">Mikro Kod:</span>
+                  <span className="text-gray-600">ERP Kod:</span>
                   <span className="ml-2 font-mono font-semibold text-gray-900">{product.mikroCode}</span>
                 </div>
                 <div>
@@ -403,11 +403,11 @@ export function ProductDetailModal({
           </div>
         </div>
 
-        {/* Mikro Liste Fiyatlari */}
+        {/* ERP Liste Fiyatlari */}
         <div>
           <h3 className="text-lg font-bold text-gray-900 mb-3 flex items-center gap-2">
             <span className="text-xl">$</span>
-            Mikro Liste Fiyatlari
+            ERP Liste Fiyatlari
           </h3>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="bg-white border border-gray-200 rounded-lg p-4">

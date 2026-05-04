@@ -2,7 +2,7 @@
  * Reports Service
  *
  * Raporları PostgreSQL'den (senkronize edilmiş verilerden) üretir.
- * Mikro'ya her seferinde bağlanmaya gerek yok, sabah sync'te çekilen veriler kullanılır.
+ * ERP'ye her seferinde bağlanmaya gerek yok, sabah sync'te çekilen veriler kullanılır.
  */
 
 import { CustomerActivityType, Prisma, UserRole } from '@prisma/client';
@@ -1610,7 +1610,7 @@ export class ReportsService {
   /**
    * Kar Marjı Analizi Raporu (019703 - Komisyon Faturası Hareket Yönetimi)
    *
-   * Mikro'daki fn_KomisyonFaturasiHareketYonetimi fonksiyonunu kullanarak
+   * ERP'deki fn_KomisyonFaturasiHareketYonetimi fonksiyonunu kullanarak
    * bekleyen siparişler ve faturalar üzerinden detaylı kar marjı analizi yapar.
    *
    * Özellikler:
@@ -2363,7 +2363,7 @@ export class ReportsService {
   /**
    * Fiyat Geçmişi Raporu
    *
-   * Mikro'daki STOK_FIYAT_DEGISIKLIKLERI tablosundan tüm fiyat değişikliklerini listeler.
+   * ERP'deki STOK_FIYAT_DEGISIKLIKLERI tablosundan tüm fiyat değişikliklerini listeler.
    * Önemli: Her ürünün 10 fiyat listesi olmalı ve hepsi aynı gün güncellenmelidir.
    * - Liste 1-5: Perakende (KDV Dahil Maliyet × Marj_{1-5})
    * - Liste 6-10: Faturalı (KDV Hariç Maliyet × Marj_{1-5})
@@ -6930,7 +6930,7 @@ export class ReportsService {
         const seri = match[1];
         const sira = Number(match[2]);
         if (seri && Number.isFinite(sira)) {
-          const fallbackApproverRaw = Number(process.env.MIKRO_USER_NO || process.env.MIKRO_USERNO || 1);
+          const fallbackApproverRaw = Number(process.env.ERP_USER_NO || process.env.MIKRO_USER_NO || process.env.MIKRO_USERNO || 1);
           const fallbackApprover =
             Number.isFinite(fallbackApproverRaw) && fallbackApproverRaw > 0
               ? Math.trunc(fallbackApproverRaw)
@@ -7032,7 +7032,7 @@ export class ReportsService {
     }
 
     const escapedSeries = series.replace(/'/g, "''");
-    const templateSeqRaw = Number(process.env.MIKRO_DEPOT_TRANSFER_TEMPLATE_SEQ || 1225);
+    const templateSeqRaw = Number(process.env.ERP_DEPOT_TRANSFER_TEMPLATE_SEQ || process.env.MIKRO_DEPOT_TRANSFER_TEMPLATE_SEQ || 1225);
     const templateSeq = Number.isFinite(templateSeqRaw) && templateSeqRaw > 0 ? Math.trunc(templateSeqRaw) : 1225;
     const templateRows = await mikroService.executeQuery(`
       SELECT TOP 1 *

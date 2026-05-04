@@ -1,7 +1,7 @@
 /**
- * Mikro ERP Raporlama Servisi
+ * ERP Raporlama Servisi
  *
- * Mikro ERP veritabanından çeşitli raporlar oluşturur
+ * ERP veritabanından çeşitli raporlar oluşturur
  */
 
 import * as sql from 'mssql';
@@ -56,7 +56,7 @@ export class MikroReportsService {
   private pool: sql.ConnectionPool | null = null;
 
   /**
-   * Mikro veritabanına bağlan
+   * ERP veritabanına bağlan
    */
   async connect(): Promise<void> {
     if (this.pool) {
@@ -65,10 +65,10 @@ export class MikroReportsService {
 
     try {
       this.pool = await sql.connect(config.mikro);
-      console.log('✅ Mikro ERP bağlantısı başarılı (Reports)');
+      console.log('✅ ERP bağlantısı başarılı (Reports)');
     } catch (error) {
-      console.error('❌ Mikro ERP bağlantı hatası:', error);
-      throw new Error('Mikro ERP bağlantısı kurulamadı');
+      console.error('❌ ERP bağlantı hatası:', error);
+      throw new Error('ERP bağlantısı kurulamadı');
     }
   }
 
@@ -79,7 +79,7 @@ export class MikroReportsService {
     if (this.pool) {
       await this.pool.close();
       this.pool = null;
-      console.log('🔌 Mikro ERP bağlantısı kapatıldı (Reports)');
+      console.log('🔌 ERP bağlantısı kapatıldı (Reports)');
     }
   }
 

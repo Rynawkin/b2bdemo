@@ -172,7 +172,7 @@ class StockService {
   }
 
   /**
-   * Anlık stok kontrolü (Mikro'dan)
+   * Anlık stok kontrolü (ERP'den)
    *
    * Sipariş verilirken gerçek zamanlı stok kontrolü için
    */
@@ -193,7 +193,7 @@ class StockService {
       throw new Error('Settings not found');
     }
 
-    // Mikro'dan anlık stok sor
+    // ERP'den anlık stok sor
     const currentStock = await mikroService.getRealtimeStock(
       product.mikroCode,
       settings.includedWarehouses

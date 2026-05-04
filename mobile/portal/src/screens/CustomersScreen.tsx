@@ -138,7 +138,7 @@ export function CustomersScreen() {
     const password = formData.password.trim();
 
     if (!selectedCari) {
-      Alert.alert('Eksik Bilgi', 'Once Mikro cari secmelisiniz.');
+      Alert.alert('Eksik Bilgi', 'Once ERP cari secmelisiniz.');
       return;
     }
     if (!email || !name || !password) {
@@ -231,7 +231,7 @@ export function CustomersScreen() {
                   <Text style={styles.createTitle}>Yeni Musteri</Text>
                   <TouchableOpacity style={styles.secondaryButton} onPress={() => setShowCariModal(true)}>
                     <Text style={styles.secondaryButtonText}>
-                      {formData.mikroCariCode ? `${formData.mikroCariCode} - ${formData.name}` : 'Mikro cari sec'}
+                      {formData.mikroCariCode ? `${formData.mikroCariCode} - ${formData.name}` : 'ERP cari sec'}
                     </Text>
                   </TouchableOpacity>
 
@@ -308,7 +308,7 @@ export function CustomersScreen() {
                   </View>
 
                   <View style={styles.infoCard}>
-                    <Text style={styles.infoTitle}>Mikro Bilgileri</Text>
+                    <Text style={styles.infoTitle}>ERP Bilgileri</Text>
                     <Text style={styles.infoText}>Sehir: {selectedCari?.city || '-'}</Text>
                     <Text style={styles.infoText}>Ilce: {selectedCari?.district || '-'}</Text>
                     <Text style={styles.infoText}>Telefon: {selectedCari?.phone || '-'}</Text>
@@ -346,7 +346,7 @@ export function CustomersScreen() {
         <View style={styles.modalBackdrop}>
           <View style={styles.modalCard}>
             <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Mikro Cari Sec</Text>
+              <Text style={styles.modalTitle}>ERP Cari Sec</Text>
               <TouchableOpacity onPress={() => setShowCariModal(false)}>
                 <Text style={styles.link}>Kapat</Text>
               </TouchableOpacity>

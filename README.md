@@ -1,10 +1,10 @@
-# 🚀 Mikro B2B Sipariş Sistemi
+# 🚀 OtoOlgun B2B Sipariş Sistemi
 
-Mikro ERP entegrasyonlu B2B sipariş yönetim platformu - **Sıfırdan Full-Stack**
+ERP entegrasyonlu B2B sipariş yönetim platformu - **Sıfırdan Full-Stack**
 
 ## 📋 Proje Özeti
 
-Fazla stoklu ürünlerin müşterilere online sipariş sistemi ile satışı. Dinamik fiyatlandırma, anlık stok kontrolü ve otomatik Mikro ERP entegrasyonu.
+Fazla stoklu ürünlerin müşterilere online sipariş sistemi ile satışı. Dinamik fiyatlandırma, anlık stok kontrolü ve otomatik ERP entegrasyonu.
 
 ---
 
@@ -13,7 +13,7 @@ Fazla stoklu ürünlerin müşterilere online sipariş sistemi ile satışı. Di
 ### Backend
 - **Node.js** + TypeScript + Express
 - **PostgreSQL** (Prisma ORM)
-- **MSSQL** (Mikro ERP bağlantısı)
+- **MSSQL** (ERP bağlantısı)
 - JWT Authentication
 - Cron Jobs (otomatik sync)
 
@@ -60,7 +60,7 @@ npm run dev
 **İlk Sync:**
 1. Admin dashboard
 2. "Şimdi Senkronize Et"
-3. Mock Mikro 14 ürün + 5 kategori yükler
+3. Mock ERP 14 ürün + 5 kategori yükler
 
 ---
 
@@ -78,14 +78,14 @@ npm run dev
 - **Beyaz Formül:** `maliyet × (1 + kdv/2)` ✨
 
 ### ✅ Kritik: 2 Ayrı Sipariş Mantığı
-Bir sepette hem faturalı hem beyaz ürün varsa, Mikro'ya **2 AYRI** sipariş yazılır!
+Bir sepette hem faturalı hem beyaz ürün varsa, ERP'ye **2 AYRI** sipariş yazılır!
 - Sipariş 1: Faturalı ürünler (normal KDV)
 - Sipariş 2: Beyaz ürünler (KDV=0)
 
 ### ✅ Anlık Stok Kontrolü
-Sipariş oluşturulmadan önce Mikro'dan anlık stok sorgulanır.
+Sipariş oluşturulmadan önce ERP'den anlık stok sorgulanır.
 
-### ✅ Mock Mikro Service
+### ✅ Mock ERP Service
 Development için gerçekçi test verisi:
 - 5 Kategori
 - 14 Ürün
@@ -164,7 +164,7 @@ C:\b2b\
 - ProductPriceOverride
 - SyncLog
 
-### MSSQL (Mikro ERP)
+### MSSQL (ERP)
 - Read-only erişim
 - SQL sorguları ile veri çekme
 - Sipariş yazma (INSERT)
@@ -217,7 +217,7 @@ C:\b2b\
 2. Dashboard → Bekleyen siparişler
 3. Detayları incele
 4. Onayla → Backend 2 sipariş yazar (Faturalı/Beyaz)
-5. Mikro ERP'ye yazılır
+5. ERP'ye yazılır
 6. Sipariş APPROVED olur
 
 ---
@@ -251,11 +251,11 @@ Beyaz Fiyat = KDV Hariç Maliyet × (1 + Ürünün KDV'si / 2)
 
 ### 3. 2 Ayrı Sipariş Yazma
 Sepette faturalı + beyaz varsa:
-- Mikro'ya 2 ayrı INSERT
+- ERP'ye 2 ayrı INSERT
 - Farklı KDV oranları
 - Ayrı faturalar
 
-### 4. Mock Mikro Service
+### 4. Mock ERP Service
 Development'ta gerçek Mikro olmadan çalışma:
 - Gerçekçi test verisi
 - 14 ürün, 5 kategori
@@ -301,7 +301,7 @@ Development'ta gerçek Mikro olmadan çalışma:
 ### Yapılması Gerekenler
 
 1. **Statik IP Alın**
-   - Mikro ERP bağlantısı için
+   - ERP bağlantısı için
 
 2. **Bora Abi'den Bilgileri Alın**
    - Mikro server, database, user, password
@@ -309,11 +309,11 @@ Development'ta gerçek Mikro olmadan çalışma:
 
 3. **Backend .env Güncelleyin**
    ```env
-   USE_MOCK_MIKRO=false
-   MIKRO_SERVER=...
-   MIKRO_DATABASE=...
-   MIKRO_USER=...
-   MIKRO_PASSWORD=...
+   USE_MOCK_ERP=false
+   ERP_SERVER=...
+   ERP_DATABASE=...
+   ERP_USER=...
+   ERP_PASSWORD=...
    ```
 
 4. **Tablo İsimlerini Güncelleyin**
@@ -338,7 +338,7 @@ Development'ta gerçek Mikro olmadan çalışma:
 **Tamamlanan:**
 - ✅ Full-Stack B2B Sipariş Sistemi
 - ✅ Dinamik fiyatlandırma motoru
-- ✅ Mock Mikro ile test edilebilir
+- ✅ Mock ERP ile test edilebilir
 - ✅ Production-ready architecture
 - ✅ 100% TypeScript
 - ✅ Modern stack
@@ -346,7 +346,7 @@ Development'ta gerçek Mikro olmadan çalışma:
 **Hazır Olan:**
 - Backend API (%100)
 - Frontend UI (%100)
-- Mock Mikro test ortamı
+- Mock ERP test ortamı
 - Detaylı dokümantasyon
 
 **Bekleyen:**

@@ -802,7 +802,7 @@ export default function OrderTrackingPage() {
                 🔄 Siparişleri Sync Et
               </Button>
               <p className="text-xs text-gray-500 mt-2">
-                Mikro ERP'den bekleyen siparişleri çeker ve veritabanına kaydeder
+                ERP'den bekleyen siparişleri çeker ve veritabanına kaydeder
               </p>
             </div>
 

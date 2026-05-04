@@ -199,7 +199,7 @@ export function BulkCreateUsersModal({ isOpen, onClose, onSuccess }: BulkCreateU
           <>
             <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
               <p className="text-sm text-blue-900">
-                <strong>Not:</strong> Bu işlem, seçilen Mikro carilerden otomatik olarak kullanıcı hesapları oluşturur.
+                <strong>Not:</strong> Bu işlem, seçilen ERP carilerden otomatik olarak kullanıcı hesapları oluşturur.
               </p>
               <ul className="text-sm text-blue-800 mt-2 space-y-1 list-disc list-inside">
                 <li>Kullanıcı adı: Cari kodu (örn: 120.01.1670)</li>

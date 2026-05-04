@@ -1,5 +1,5 @@
 -- CreateTable: price_changes
--- Mikro ERP fiyat değişikliklerini PostgreSQL'de saklayacak tablo
+-- ERP fiyat değişikliklerini PostgreSQL'de saklayacak tablo
 -- Bu sayede hızlı sorgulama ve geçmiş analizi yapabileceğiz
 -- Migration Date: 2025-12-04
 

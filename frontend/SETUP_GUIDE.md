@@ -68,9 +68,9 @@ Otomatik olarak `/login` sayfasına yönlendirileceksiniz.
 
 ### ✅ Admin Features
 - Dashboard ve istatistikler
-- Manuel Mikro senkronizasyonu
-- Yeni müşteri ekleme (Mikro cari kodu ile)
-- Bekleyen siparişleri onaylama (otomatik Mikro'ya yazma)
+- Manuel ERP senkronizasyonu
+- Yeni müşteri ekleme (ERP cari kodu ile)
+- Bekleyen siparişleri onaylama (otomatik ERP'ye yazma)
 - Kategori bazlı kar marjı belirleme
 - Sistem ayarları yönetimi
 
@@ -110,7 +110,7 @@ Tüm sayfalarda "Çıkış" butonu var. Token temizlenir ve `/login`'e yönlendi
 1. **Login**: admin@firma.com / admin123
 2. Dashboard'da "Bekleyen Siparişler"
 3. Sipariş detaylarını incele
-4. "Onayla ve Mikro'ya Gönder"
+4. "Onayla ve ERP'ye Gönder"
 5. Backend 2 ayrı sipariş yazar (Faturalı/Beyaz)
 6. Sipariş APPROVED olur
 
@@ -118,7 +118,7 @@ Tüm sayfalarda "Çıkış" butonu var. Token temizlenir ve `/login`'e yönlendi
 
 1. Dashboard → "Müşteriler"
 2. "+ Yeni Müşteri"
-3. Email, şifre, ad, tip, Mikro cari kodu gir
+3. Email, şifre, ad, tip, ERP cari kodu gir
 4. Müşteri oluştur
 5. Müşteri artık login olabilir
 
@@ -162,7 +162,7 @@ npm run lint
 - Logout yapıp yeniden login olun
 
 ### "Insufficient Stock" Hatası
-- Backend'de Mock Mikro kullanıyorsanız, mock data'daki stoklar sınırlıdır
+- Backend'de Mock ERP kullanıyorsanız, mock data'daki stoklar sınırlıdır
 - Daha az miktar deneyin veya başka ürün seçin
 
 ### Ürünler Gözükmüyor
@@ -176,7 +176,7 @@ npm run lint
 ### Önemli
 - Backend olmadan frontend çalışmaz (API bağımlılığı var)
 - İlk kullanımda mutlaka sync yapın (Admin → Dashboard)
-- Mock Mikro kullanıyorsanız, 14 ürün ve 5 kategori gelir
+- Mock ERP kullanıyorsanız, 14 ürün ve 5 kategori gelir
 
 ### Fiyatlandırma
 - Beyaz fiyat formülü: `cost × (1 + vat/2)`
@@ -185,7 +185,7 @@ npm run lint
 
 ### 2 Ayrı Sipariş Mantığı
 - Bir sepette hem faturalı hem beyaz varsa
-- Backend Mikro'ya 2 AYRI sipariş yazar
+- Backend ERP'ye 2 AYRI sipariş yazar
 - Bu kritik bir business rule!
 
 ---

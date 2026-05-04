@@ -454,7 +454,7 @@ export function DashboardScreen() {
     <SafeAreaView style={styles.safeArea}>
       <ScrollView contentContainerStyle={styles.container} showsVerticalScrollIndicator={false}>
         <Text style={styles.kicker}>Operasyon Paneli</Text>
-        <Text style={styles.title}>{user?.name || 'Bakircilar'}</Text>
+        <Text style={styles.title}>{user?.name || 'OtoOlgun'}</Text>
         <Text style={styles.subtitle}>Push bildirimli ve kisilestirilebilir dashboard.</Text>
 
         <View style={styles.customizeCard}>

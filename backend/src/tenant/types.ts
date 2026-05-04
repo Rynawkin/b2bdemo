@@ -32,7 +32,7 @@ export interface TenantWarehouseConfig {
 }
 
 export interface TenantIntegrationConfig {
-  erp: 'mikro';
+  erp: 'generic' | 'mikro';
   defaultCurrency: string;
   warehouse: TenantWarehouseConfig;
 }

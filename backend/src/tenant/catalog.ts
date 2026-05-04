@@ -8,7 +8,7 @@ const splitCsv = (value?: string): string[] =>
 
 const unique = (values: string[]): string[] => Array.from(new Set(values.map((item) => item.toLowerCase())));
 
-const DEFAULT_TENANT_SLUG = process.env.DEFAULT_TENANT_SLUG || 'platform';
+const DEFAULT_TENANT_SLUG = process.env.DEFAULT_TENANT_SLUG || 'otoolgun';
 
 const platformTenant: TenantConfig = {
   slug: 'platform',
@@ -44,41 +44,41 @@ const platformTenant: TenantConfig = {
     ucarerReports: false,
   },
   integrations: {
-    erp: 'mikro',
+    erp: 'generic',
     defaultCurrency: 'TRY',
     warehouse: {
       labels: {
         '1': 'Merkez',
       },
       includedWarehouseCodes: ['1'],
-      defaultResponsibilityCenter: process.env.MIKRO_SORMERK || '',
+      defaultResponsibilityCenter: process.env.ERP_SORMERK || process.env.MIKRO_SORMERK || '',
     },
   },
 };
 
-const bakircilarTenant: TenantConfig = {
-  slug: 'bakircilar',
+const otoOlgunTenant: TenantConfig = {
+  slug: 'otoolgun',
   status: 'active',
   domains: unique([
-    ...splitCsv(process.env.TENANT_BAKIRCILAR_DOMAINS),
-    'bakircilarkampanya.com',
-    'www.bakircilarkampanya.com',
+    ...splitCsv(process.env.TENANT_OTOOLGUN_DOMAINS),
+    'otoolgun.com',
+    'www.otoolgun.com',
   ]),
   branding: {
-    companyName: 'Bakircilar Grup',
-    legalName: 'BAKIRCILAR AMBALAJ END.-TEM VE KIRTASIYE',
-    shortName: 'Bakircilar',
-    customerPortalName: 'Bakircilar B2B',
-    staffPortalName: 'Bakircilar Portal',
-    emailFromName: 'Bakircilar B2B',
-    supportEmail: process.env.BREVO_SENDER_EMAIL || 'noreply@bakircilar.com',
-    supportPhone: '0264 614 67 77',
-    websiteUrl: 'https://www.bakircilargrup.com',
+    companyName: 'OtoOlgun',
+    legalName: 'OTOOLGUN',
+    shortName: 'OtoOlgun',
+    customerPortalName: 'OtoOlgun B2B',
+    staffPortalName: 'OtoOlgun Portal',
+    emailFromName: 'OtoOlgun B2B',
+    supportEmail: process.env.BREVO_SENDER_EMAIL || 'noreply@otoolgun.com',
+    supportPhone: '',
+    websiteUrl: 'https://www.otoolgun.com',
     logoPath: '/logo.png',
     quoteLogoPath: '/quote-logo.png',
-    loginTitle: 'Bakircilar Grup',
+    loginTitle: 'OtoOlgun',
     loginSubtitle: 'B2B Siparis Sistemi',
-    copyrightName: 'Bakircilar Grup',
+    copyrightName: 'OtoOlgun',
   },
   features: {
     vade: true,
@@ -90,7 +90,7 @@ const bakircilarTenant: TenantConfig = {
     ucarerReports: true,
   },
   integrations: {
-    erp: 'mikro',
+    erp: 'generic',
     defaultCurrency: 'TRY',
     warehouse: {
       labels: {
@@ -100,14 +100,14 @@ const bakircilarTenant: TenantConfig = {
         '7': 'Dukkan',
       },
       includedWarehouseCodes: ['1', '2', '6', '7'],
-      defaultResponsibilityCenter: process.env.MIKRO_SORMERK || 'HENDEK',
+      defaultResponsibilityCenter: process.env.ERP_SORMERK || process.env.MIKRO_SORMERK || '',
     },
   },
 };
 
 const tenantCatalog: Record<string, TenantConfig> = {
   [platformTenant.slug]: platformTenant,
-  [bakircilarTenant.slug]: bakircilarTenant,
+  [otoOlgunTenant.slug]: otoOlgunTenant,
 };
 
 export const getTenantCatalog = (): Record<string, TenantConfig> => tenantCatalog;

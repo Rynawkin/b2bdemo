@@ -142,7 +142,7 @@ export default function CustomerSearchPage() {
             Cari Arama
           </h1>
           <p className="text-gray-600">
-            Cari F10 - Mikro ERP entegrasyonu ile detaylı cari bilgileri
+            Cari F10 - ERP entegrasyonu ile detaylı cari bilgileri
           </p>
         </div>
 

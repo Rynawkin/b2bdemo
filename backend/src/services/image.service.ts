@@ -1,7 +1,7 @@
 /**
  * Image Service
  *
- * Mikro ERP'den ürün resimlerini indirir, optimize eder ve kaydeder
+ * ERP'den ürün resimlerini indirir, optimize eder ve kaydeder
  */
 
 import mssql from 'mssql';
@@ -116,7 +116,7 @@ class ImageService {
 
     const realMikroService = mikroService as any;
     if (!realMikroService.pool || !realMikroService.connect) {
-      throw new Error('Mikro service not available');
+      throw new Error('ERP service not available');
     }
 
     await realMikroService.connect();
@@ -226,7 +226,7 @@ class ImageService {
   }
 
   /**
-   * Mikro'dan bir ürünün resmini indir
+   * ERP'den bir ürünün resmini indir
    */
   async downloadImageFromMikro(
     productCode: string,
@@ -250,12 +250,12 @@ class ImageService {
         return {
           success: false,
           skipped: true,
-          skipReason: 'Gerçek Mikro service kullanılmıyor',
+          skipReason: 'Gerçek ERP service kullanılmıyor',
           errorType: 'NO_SERVICE',
         };
       }
 
-      // Mikro'ya bağlan
+      // ERP'ye bağlan
       const connectStart = Date.now();
       await realMikroService.connect();
       const connectTime = Date.now() - connectStart;

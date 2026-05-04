@@ -724,7 +724,7 @@ export interface Customer {
   lastPriceMinCostPercent?: number;
   active: boolean;
   createdAt: string;
-  // Mikro-synced fields
+  // ERP-synced fields
   city?: string;
   district?: string;
   phone?: string;

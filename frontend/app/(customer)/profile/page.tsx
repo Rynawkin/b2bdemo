@@ -85,7 +85,7 @@ export default function ProfilePage() {
 
               <div className="border-t mt-6 pt-6 space-y-4">
                 <div className="bg-gray-50 p-4 rounded-lg">
-                  <p className="text-xs text-gray-600 mb-1">Mikro Cari Kodu</p>
+                  <p className="text-xs text-gray-600 mb-1">ERP Cari Kodu</p>
                   <p className="text-sm font-mono font-semibold text-gray-900">{user.mikroCariCode}</p>
                 </div>
 

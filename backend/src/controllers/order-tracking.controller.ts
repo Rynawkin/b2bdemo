@@ -39,7 +39,7 @@ class OrderTrackingController {
 
   /**
    * POST /api/admin/order-tracking/sync
-   * Manuel sync (Mikro'dan bekleyen siparişleri çek)
+   * Manuel sync (ERP'den bekleyen siparişleri çek)
    */
   async syncPendingOrders(req: Request, res: Response) {
     try {

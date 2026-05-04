@@ -70,12 +70,12 @@ const LoginForm = () => {
           <div className="mb-8 px-4">
             <img
               src={tenant.branding.logoPath || '/logo.png'}
-              alt="Bakırcılar Logo"
+              alt="OtoOlgun Logo"
               className="h-48 w-full max-w-md mx-auto object-contain drop-shadow-2xl"
             />
           </div>
           <h2 className="text-3xl font-extrabold text-white" style={{ display: 'none' }}>
-            Bakırcılar Grup
+            OtoOlgun
           </h2>
           <h2 className="text-3xl font-extrabold text-white">
             {tenant.branding.loginTitle}
@@ -143,7 +143,7 @@ const LoginForm = () => {
 
         {/* Footer */}
         <div className="text-center text-xs text-primary-100" style={{ display: 'none' }}>
-          <p>© 2025 Bakırcılar Grup. Tüm hakları saklıdır.</p>
+          <p>© 2025 OtoOlgun. Tüm hakları saklıdır.</p>
         </div>
       </div>
     </div>

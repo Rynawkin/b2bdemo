@@ -112,7 +112,7 @@ export function SyncScreen() {
     <SafeAreaView style={styles.safeArea}>
       <View style={styles.container}>
         <Text style={styles.title}>Senkronizasyon</Text>
-        <Text style={styles.subtitle}>Mikro verilerini guncelleme islemleri.</Text>
+        <Text style={styles.subtitle}>ERP verilerini guncelleme islemleri.</Text>
 
         {error && <Text style={styles.error}>{error}</Text>}
 

@@ -18,7 +18,7 @@ const config = {
 
 (async () => {
   try {
-    console.log('🔌 Mikro ERP\'ye bağlanılıyor...');
+    console.log('🔌 ERP\'ye bağlanılıyor...');
     const pool = await mssql.connect(config);
 
     // 1. STOKLAR tablosunun TÜM kolonlarını listele

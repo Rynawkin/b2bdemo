@@ -8,8 +8,8 @@ import { TenantProvider } from '@/components/TenantProvider';
 const inter = Inter({ subsets: ['latin'] });
 
 export const metadata: Metadata = {
-  title: 'Bakırcılar Grup B2B - Sipariş Sistemi',
-  description: 'Bakırcılar Grup B2B Sipariş Yönetim Platformu',
+  title: 'OtoOlgun B2B - Sipariş Sistemi',
+  description: 'OtoOlgun B2B Sipariş Yönetim Platformu',
 };
 
 export default function RootLayout({

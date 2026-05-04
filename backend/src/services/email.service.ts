@@ -151,7 +151,7 @@ class EmailService {
     );
     this.senderEmail = process.env.BREVO_SENDER_EMAIL || defaultTenant.branding.supportEmail;
     this.senderName = process.env.BREVO_SENDER_NAME || defaultTenant.branding.emailFromName;
-    this.senderName = process.env.BREVO_SENDER_NAME || 'Bakırcılar B2B';
+    this.senderName = process.env.BREVO_SENDER_NAME || 'OtoOlgun B2B';
   }
 
   /**
@@ -419,7 +419,7 @@ class EmailService {
       <body style="margin: 0; padding: 0; font-family: Arial, sans-serif; background-color: #f5f5f5;">
         <div style="max-width: 800px; margin: 0 auto; padding: 20px;">
           <div style="background: linear-gradient(135deg, #2563eb 0%, #1e40af 100%); color: white; padding: 30px; border-radius: 8px 8px 0 0;">
-            <h1 style="margin: 0; font-size: 28px;">📋 Bakırcılar Ambalaj Sipariş Bakiyesi</h1>
+            <h1 style="margin: 0; font-size: 28px;">📋 OtoOlgun Sipariş Bakiyesi</h1>
             <p style="margin: 10px 0 0 0; opacity: 0.9;">Sayın ${data.customerName},</p>
           </div>
 
@@ -444,10 +444,10 @@ class EmailService {
 
           <div style="background: #374151; color: white; padding: 20px; border-radius: 0 0 8px 8px; text-align: center;">
             <p style="margin: 0; font-size: 14px; opacity: 0.8;">
-              Sorularınız için: <a href="mailto:info@bakircilarambalaj.com" style="color: white; text-decoration: none;">info@bakircilarambalaj.com</a>
+              Sorularınız için: <a href="mailto:info@otoolgun.com" style="color: white; text-decoration: none;">info@otoolgun.com</a>
             </p>
             <p style="margin: 10px 0 0 0; font-size: 12px; opacity: 0.6;">
-              © ${new Date().getFullYear()} Bakırcılar Ambalaj. Tüm hakları saklıdır.
+              © ${new Date().getFullYear()} OtoOlgun. Tüm hakları saklıdır.
             </p>
           </div>
         </div>
@@ -562,7 +562,7 @@ class EmailService {
         if (!targetEmail) {
           return {
             success: false,
-            message: 'Musteri email adresi bulunamadi (ne Mikro CARI\'da ne de User tablosunda)',
+            message: 'Musteri email adresi bulunamadi (ne ERP CARI\'da ne de User tablosunda)',
           };
         }
       }

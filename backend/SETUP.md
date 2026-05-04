@@ -23,7 +23,7 @@ npm install
 psql -U postgres
 
 # Database oluştur
-CREATE DATABASE mikrob2b;
+CREATE DATABASE otoolgunb2b;
 
 # Çıkış
 \q
@@ -32,7 +32,7 @@ CREATE DATABASE mikrob2b;
 **Alternatif (pgAdmin kullanarak):**
 - pgAdmin'i aç
 - Sağ tık > Create > Database
-- Name: `mikrob2b`
+- Name: `otoolgunb2b`
 - Save
 
 ### 3. Environment Variables Ayarla
@@ -41,13 +41,13 @@ CREATE DATABASE mikrob2b;
 
 ```env
 # PostgreSQL bağlantı string'ini güncelle
-DATABASE_URL="postgresql://postgres:SIFRENIZ@localhost:5432/mikrob2b?schema=public"
+DATABASE_URL="postgresql://postgres:SIFRENIZ@localhost:5432/otoolgunb2b?schema=public"
 
 # JWT secret (production'da değiştir!)
 JWT_SECRET=mikro-b2b-super-secret-jwt-key-change-in-production-2024
 
-# Mock Mikro kullan (development için)
-USE_MOCK_MIKRO=true
+# Mock ERP kullan (development için)
+USE_MOCK_ERP=true
 
 # Cron'u kapat (development için)
 ENABLE_CRON=false
@@ -162,7 +162,7 @@ npx prisma migrate reset
 
 PostgreSQL'de database'i elle oluşturun:
 ```sql
-CREATE DATABASE mikrob2b;
+CREATE DATABASE otoolgunb2b;
 ```
 
 ### "Port 5000 already in use" Hatası

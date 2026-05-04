@@ -29,7 +29,7 @@ async function createTestCustomer() {
     console.log('📧 Email: musteri@test.com');
     console.log('🔑 Şifre: 123456');
     console.log('👤 Tip: BAYI');
-    console.log('🏢 Mikro Cari Kodu: CARI001\n');
+    console.log('🏢 ERP Cari Kodu: CARI001\n');
 
   } catch (error: any) {
     if (error.code === 'P2002') {

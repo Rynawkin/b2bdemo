@@ -221,7 +221,7 @@ export default function AdminDashboardPage() {
       toast((t) => (
         <div className="flex flex-col gap-3">
           <p className="font-medium">Cari senkronizasyonu başlatılsın mı?</p>
-          <p className="text-sm text-gray-600">Mikro ERP'deki cari bilgileri müşteri kayıtlarına aktarılacak.</p>
+          <p className="text-sm text-gray-600">ERP'deki cari bilgileri müşteri kayıtlarına aktarılacak.</p>
           <div className="flex gap-2 justify-end">
             <button
               className="px-3 py-1 text-sm bg-gray-200 rounded hover:bg-gray-300"
@@ -272,7 +272,7 @@ export default function AdminDashboardPage() {
     const confirmed = await new Promise((resolve) => {
       toast((t) => (
         <div className="flex flex-col gap-3">
-          <p className="font-medium">Mikro ERP ile senkronizasyon başlatılsın mı?</p>
+          <p className="font-medium">ERP ile senkronizasyon başlatılsın mı?</p>
           <p className="text-sm text-gray-600">Bu işlem birkaç dakika sürebilir. (Resimler hariç)</p>
           <div className="flex gap-2 justify-end">
             <button
@@ -649,7 +649,7 @@ export default function AdminDashboardPage() {
                   </div>
                   <div>
                     <h3 className="font-bold text-lg text-gray-900">Stok Arama</h3>
-                    <p className="text-sm text-gray-600">Mikro F10 entegrasyonu ile detaylı stok bilgileri</p>
+                    <p className="text-sm text-gray-600">ERP F10 entegrasyonu ile detaylı stok bilgileri</p>
                   </div>
                 </div>
                 <Button
@@ -672,7 +672,7 @@ export default function AdminDashboardPage() {
                   </div>
                   <div>
                     <h3 className="font-bold text-lg text-gray-900">Cari Arama</h3>
-                    <p className="text-sm text-gray-600">Mikro F10 entegrasyonu ile detaylı cari bilgileri</p>
+                    <p className="text-sm text-gray-600">ERP F10 entegrasyonu ile detaylı cari bilgileri</p>
                   </div>
                 </div>
                 <Button
@@ -825,11 +825,11 @@ export default function AdminDashboardPage() {
               </div>
               <div>
                 <h3 className="font-bold text-lg text-gray-900">Senkronizasyon</h3>
-                <p className="text-xs text-gray-600">Mikro ERP ile senkronize et</p>
+                <p className="text-xs text-gray-600">ERP ile senkronize et</p>
               </div>
             </div>
             <p className="text-sm text-gray-600 mb-4 bg-blue-50 border-l-4 border-blue-500 p-3 rounded">
-              💡 Ürün, stok ve fiyat bilgilerini Mikro ERP'den güncelleyin. (Resimler hariç)
+              💡 Ürün, stok ve fiyat bilgilerini ERP'den güncelleyin. (Resimler hariç)
             </p>
             {stats?.lastSyncAt && (
               <div className="bg-gray-100 border border-gray-200 px-3 py-2 rounded mb-4 text-sm">
@@ -908,7 +908,7 @@ export default function AdminDashboardPage() {
               </div>
             </div>
             <p className="text-sm text-gray-600 mb-4 bg-orange-50 border-l-4 border-orange-500 p-3 rounded">
-              💡 Mikro ERP'deki cari bilgilerini müşteri kayıtlarına aktarın.
+              💡 ERP'deki cari bilgilerini müşteri kayıtlarına aktarın.
             </p>
             <Button
               onClick={handleCariSync}
@@ -931,7 +931,7 @@ export default function AdminDashboardPage() {
               </div>
             </div>
             <p className="text-sm text-gray-600 mb-4 bg-purple-50 border-l-4 border-purple-500 p-3 rounded">
-              💡 Mikro ERP'den resmi olmayan ürünler için resimleri indirin.
+              💡 ERP'den resmi olmayan ürünler için resimleri indirin.
             </p>
             {imageSyncProgress && (
               <div className={`${isImageSyncing ? 'bg-purple-50 border-purple-200' : 'bg-green-50 border-green-200'} border px-3 py-2 rounded mb-3 text-sm`}>

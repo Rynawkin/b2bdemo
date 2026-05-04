@@ -1,30 +1,30 @@
 import { TenantPublicConfig } from './types';
 
 const runtimeHostMap: Record<string, string> = {
-  'bakircilarkampanya.com': 'bakircilar',
-  'www.bakircilarkampanya.com': 'bakircilar',
+  'otoolgun.com': 'otoolgun',
+  'www.otoolgun.com': 'otoolgun',
 };
 
-const defaultTenantSlug = process.env.NEXT_PUBLIC_DEFAULT_TENANT_SLUG || 'platform';
+const defaultTenantSlug = process.env.NEXT_PUBLIC_DEFAULT_TENANT_SLUG || 'otoolgun';
 
 export const defaultTenant: TenantPublicConfig = {
   slug: defaultTenantSlug,
   status: 'active',
   branding: {
-    companyName: 'B2B Platform',
-    legalName: 'B2B Platform',
-    shortName: 'B2B Platform',
-    customerPortalName: 'B2B Musteri Portali',
-    staffPortalName: 'B2B Yonetim Portali',
-    emailFromName: 'B2B Platform',
-    supportEmail: 'support@example.com',
+    companyName: 'OtoOlgun',
+    legalName: 'OTOOLGUN',
+    shortName: 'OtoOlgun',
+    customerPortalName: 'OtoOlgun B2B',
+    staffPortalName: 'OtoOlgun Portal',
+    emailFromName: 'OtoOlgun B2B',
+    supportEmail: 'noreply@otoolgun.com',
     supportPhone: '',
     websiteUrl: '',
     logoPath: '/logo.png',
     quoteLogoPath: '/quote-logo.png',
-    loginTitle: 'B2B Platform',
-    loginSubtitle: 'Siparis ve operasyon yonetimi',
-    copyrightName: 'B2B Platform',
+    loginTitle: 'OtoOlgun',
+    loginSubtitle: 'B2B Siparis Sistemi',
+    copyrightName: 'OtoOlgun',
   },
   features: {
     vade: true,
@@ -36,7 +36,7 @@ export const defaultTenant: TenantPublicConfig = {
     ucarerReports: false,
   },
   integrations: {
-    erp: 'mikro',
+    erp: 'generic',
     defaultCurrency: 'TRY',
     warehouse: {
       labels: {

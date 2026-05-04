@@ -28,7 +28,7 @@ const links: Array<{ label: string; route: keyof PortalStackParamList; descripti
   { label: 'Personel', route: 'Staff', description: 'Satis temsilcisi ayarlari.' },
   { label: 'Rol Yetkileri', route: 'RolePermissions', description: 'Rol izinleri ve erisimler.' },
   { label: 'Ayarlar', route: 'Settings', description: 'Genel sistem ayarlari.' },
-  { label: 'Senkronizasyon', route: 'Sync', description: 'Mikro senkron takibi.' },
+  { label: 'Senkronizasyon', route: 'Sync', description: 'ERP senkron takibi.' },
 ];
 
 export function MoreScreen() {

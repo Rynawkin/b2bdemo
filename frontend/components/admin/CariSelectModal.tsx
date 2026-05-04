@@ -88,7 +88,7 @@ export function CariSelectModal({ isOpen, onClose, onSelect, cariList }: CariSel
     <Modal
       isOpen={isOpen}
       onClose={handleClose}
-      title="Mikro ERP'den Cari Seç"
+      title="ERP'den Cari Seç"
       size="xl"
       footer={
         <>

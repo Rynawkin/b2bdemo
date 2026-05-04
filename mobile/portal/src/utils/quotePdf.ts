@@ -5,7 +5,7 @@ import { Linking } from 'react-native';
 import { Quote } from '../types';
 
 const API_BASE =
-  process.env.EXPO_PUBLIC_API_BASE_URL || 'https://www.bakircilarkampanya.com/api';
+  process.env.EXPO_PUBLIC_API_BASE_URL || 'https://www.otoolgun.com/api';
 
 const BASE_URL = API_BASE.replace(/\/api\/?$/, '');
 
