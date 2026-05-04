@@ -151,9 +151,18 @@ class BaytService {
     await this.connect();
     const result = await this.pool!.request().query(`
       SELECT DISTINCT
-        COALESCE(CAST(g.ID AS varchar(30)), 'UNCATEGORIZED') AS groupId,
-        COALESCE(NULLIF(LTRIM(RTRIM(g.KOD)), ''), CAST(g.ID AS varchar(30)), 'GENEL') AS code,
-        COALESCE(NULLIF(LTRIM(RTRIM(g.IZAH)), ''), NULLIF(LTRIM(RTRIM(g.KOD)), ''), 'Genel') AS name
+        CASE
+          WHEN ISNULL(s.OZELGRUP1, -1) <= 0 OR g.ID IS NULL THEN 'UNCATEGORIZED'
+          ELSE CAST(g.ID AS varchar(30))
+        END AS groupId,
+        CASE
+          WHEN ISNULL(s.OZELGRUP1, -1) <= 0 OR g.ID IS NULL THEN 'GENEL'
+          ELSE COALESCE(NULLIF(LTRIM(RTRIM(g.KOD)), ''), CAST(g.ID AS varchar(30)), 'GENEL')
+        END AS code,
+        CASE
+          WHEN ISNULL(s.OZELGRUP1, -1) <= 0 OR g.ID IS NULL THEN 'Genel'
+          ELSE COALESCE(NULLIF(LTRIM(RTRIM(g.IZAH)), ''), NULLIF(LTRIM(RTRIM(g.KOD)), ''), 'Genel')
+        END AS name
       FROM STOK s
       LEFT JOIN GRUP g ON g.ID = s.OZELGRUP1
       WHERE NULLIF(LTRIM(RTRIM(s.KOD)), '') IS NOT NULL
@@ -238,6 +247,7 @@ class BaytService {
     return productResult.recordset.map((row: any) => {
       const code = this.trim(row.KOD);
       const groupId = this.trim(row.OZELGRUP1);
+      const numericGroupId = Number(groupId);
       const purchasePrice = Number(row.purchasePrice) || 0;
       return {
         id: String(row.ID),
@@ -245,7 +255,7 @@ class BaytService {
         name: this.trim(row.ADI) || code,
         foreignName: this.trim(row.ACIKLAMA) || null,
         brandCode: this.trim(row.groupCode) || null,
-        categoryId: groupId ? `BAYT-GRP-${groupId}` : 'BAYT-UNCATEGORIZED',
+        categoryId: Number.isFinite(numericGroupId) && numericGroupId > 0 ? `BAYT-GRP-${groupId}` : 'BAYT-UNCATEGORIZED',
         unit: this.trim(row.unitName) || 'ADET',
         unit2: null,
         unit2Factor: null,

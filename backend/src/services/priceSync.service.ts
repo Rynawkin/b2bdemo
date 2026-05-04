@@ -45,7 +45,7 @@ class PriceSyncService {
         const safeCode = code.replace(/'/g, "''");
         const productName = (product?.name || code).replace(/'/g, "''");
         const cost = product?.currentCost;
-        const costValue = cost === null || cost === undefined ? 'NULL' : cost;
+        const costValue = cost === null || cost === undefined ? 0 : cost;
 
         const margins = priceLists.map((price) => {
           if (!price || price === 0 || !cost || cost === 0) return 0;
