@@ -19,7 +19,9 @@ function resolveBackendUrl(): string {
     return normalized
       .replace('http://localhost:5000', 'http://138.197.187.138')
       .replace('http://127.0.0.1:5000', 'http://138.197.187.138')
-      .replace('http://138.197.187.138:5000', 'http://138.197.187.138');
+      .replace('http://138.197.187.138:5000', 'http://138.197.187.138')
+      .replace('http://139.59.133.81:5000', 'http://138.197.187.138')
+      .replace('http://139.59.133.81', 'http://138.197.187.138');
   }
 
   return normalized;
