@@ -42,6 +42,7 @@ class PriceSyncService {
       const values = batch.map((code) => {
         const priceLists = priceListMap.get(code) || Array(10).fill(0);
         const product = productMap.get(code);
+        const safeCode = code.replace(/'/g, "''");
         const productName = (product?.name || code).replace(/'/g, "''");
         const cost = product?.currentCost;
         const costValue = cost === null || cost === undefined ? 'NULL' : cost;
@@ -53,13 +54,13 @@ class PriceSyncService {
 
         return `(
           '${randomUUID()}',
-          '${code}',
+          '${safeCode}',
           '${productName}',
           NULL,
           NULL,
           0,
           NULL,
-          NULL,
+          CURRENT_TIMESTAMP,
           NULL,
           NULL,
           ${costValue},
