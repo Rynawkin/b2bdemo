@@ -1,24 +1,28 @@
 /**
  * ERP Service Factory
  *
- * Development'ta mock, production'da gerçek ERP service kullanır
+ * Development uses mock data. Production can use Mikro or Bayt through
+ * ERP_PROVIDER while keeping the old mikroService import surface stable.
  */
 
 import { config } from '../config';
 import mikroMockService from './mikroMock.service';
 import mikroRealService from './mikro.service';
+import baytService from './bayt.service';
 
-/**
- * Environment'a göre doğru servisi döndür
- */
-const getMikroService = (): typeof mikroMockService | typeof mikroRealService => {
+const getMikroService = (): typeof mikroRealService => {
   if (config.useMockMikro) {
-    console.log('🎭 Mock ERP Service kullanılıyor');
-    return mikroMockService;
-  } else {
-    console.log('🔗 Gerçek ERP Service kullanılıyor');
-    return mikroRealService;
+    console.log('Mock ERP Service kullaniliyor');
+    return mikroMockService as unknown as typeof mikroRealService;
   }
+
+  if (config.erpProvider === 'bayt') {
+    console.log('Bayt ERP Service kullaniliyor (read-only)');
+    return baytService as unknown as typeof mikroRealService;
+  }
+
+  console.log('Mikro ERP Service kullaniliyor');
+  return mikroRealService;
 };
 
 export default getMikroService();

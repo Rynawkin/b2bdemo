@@ -9,7 +9,7 @@ import { CustomerActivityType, Prisma, UserRole } from '@prisma/client';
 import { prisma } from '../utils/prisma';
 import { config } from '../config';
 import { AppError, ErrorCode } from '../types/errors';
-import mikroService from './mikro.service';
+import mikroService from './mikroFactory.service';
 import exclusionService from './exclusion.service';
 import priceListService from './price-list.service';
 import pricingService from './pricing.service';
