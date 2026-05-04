@@ -6,11 +6,26 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 
-const BACKEND_URL = (
-  process.env.BACKEND_URL ||
-  process.env.NEXT_PUBLIC_API_URL ||
-  'http://138.197.187.138:5000'
-).replace(/\/api\/?$/, '').replace(/\/$/, '');
+function resolveBackendUrl(): string {
+  const fallback =
+    process.env.NODE_ENV === 'production'
+      ? 'http://138.197.187.138'
+      : 'http://localhost:5000';
+
+  const raw = process.env.BACKEND_URL || process.env.NEXT_PUBLIC_API_URL || fallback;
+  const normalized = raw.replace(/\/api\/?$/, '').replace(/\/$/, '');
+
+  if (process.env.NODE_ENV === 'production') {
+    return normalized
+      .replace('http://localhost:5000', 'http://138.197.187.138')
+      .replace('http://127.0.0.1:5000', 'http://138.197.187.138')
+      .replace('http://138.197.187.138:5000', 'http://138.197.187.138');
+  }
+
+  return normalized;
+}
+
+const BACKEND_URL = resolveBackendUrl();
 
 export async function GET(request: NextRequest) {
   return proxyRequest(request, 'GET');
