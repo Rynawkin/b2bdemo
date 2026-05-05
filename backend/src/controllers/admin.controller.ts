@@ -2560,7 +2560,8 @@ export class AdminController {
       const period = periodRange.resolvedPeriod;
 
       const isSalesRep = userRole === 'SALES_REP';
-      const salesRepScopeCodes = isSalesRep
+      const isBayt = config.erpProvider === 'bayt';
+      const salesRepScopeCodes = isSalesRep || isBayt
         ? []
         : await mikroService.executeQuery(`
             SELECT DISTINCT LTRIM(RTRIM(ISNULL(sktr_kod, ''))) AS sectorCode
@@ -2578,7 +2579,10 @@ export class AdminController {
                   .filter(Boolean)
               )
             )
-          );
+          ).catch((error: any) => {
+            console.error('Dashboard sector scope fetch failed', error);
+            return [];
+          });
       const sectorCodes = isSalesRep
         ? (
             assignedSectorCodes.length > 0
@@ -2686,6 +2690,46 @@ export class AdminController {
           amount: Number(row.totalAmount || 0),
         };
       };
+      const localOrderWhere = {
+        createdAt: {
+          gte: periodRange.start,
+          lte: periodRange.end,
+        },
+        ...(hasSectorScope ? { user: { sectorCode: { in: sectorCodes } } } : {}),
+      };
+      const localQuoteWhere = {
+        createdAt: {
+          gte: periodRange.start,
+          lte: periodRange.end,
+        },
+        ...(hasSectorScope ? { customer: { sectorCode: { in: sectorCodes } } } : {}),
+      };
+      const fetchLocalOrderSummary = async () => {
+        const [count, total] = await Promise.all([
+          prisma.order.count({ where: localOrderWhere }),
+          prisma.order.aggregate({
+            where: localOrderWhere,
+            _sum: { totalAmount: true },
+          }),
+        ]);
+        return {
+          count,
+          amount: Number(total._sum.totalAmount || 0),
+        };
+      };
+      const fetchLocalQuoteSummary = async () => {
+        const [count, total] = await Promise.all([
+          prisma.quote.count({ where: localQuoteWhere }),
+          prisma.quote.aggregate({
+            where: localQuoteWhere,
+            _sum: { grandTotal: true },
+          }),
+        ]);
+        return {
+          count,
+          amount: Number(total._sum.grandTotal || 0),
+        };
+      };
 
       const [
         orderStats,
@@ -2700,9 +2744,9 @@ export class AdminController {
         prisma.user.count({ where: customerWhere }),
         prisma.product.count({ where: { active: true, excessStock: { gt: 0 } } }),
         prisma.settings.findFirst({ select: { lastSyncAt: true } }),
-        fetchMikroSalesSummary().catch(() => ({ count: 0, amount: 0 })),
-        fetchMikroOrderSummary().catch(() => ({ count: 0, amount: 0 })),
-        fetchMikroQuoteSummary().catch(() => ({ count: 0, amount: 0 })),
+        isBayt ? Promise.resolve({ count: 0, amount: 0 }) : fetchMikroSalesSummary().catch(() => ({ count: 0, amount: 0 })),
+        isBayt ? fetchLocalOrderSummary() : fetchMikroOrderSummary().catch(() => ({ count: 0, amount: 0 })),
+        isBayt ? fetchLocalQuoteSummary() : fetchMikroQuoteSummary().catch(() => ({ count: 0, amount: 0 })),
       ]);
 
       res.json({
