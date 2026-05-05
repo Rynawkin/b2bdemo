@@ -321,6 +321,7 @@ class BaytService {
       FROM STK_FIS_HAR h
       INNER JOIN STOK s ON s.ID = h.KARTID
       WHERE ISNULL(h.IPTAL, 0) = 0
+        AND h.FISTIP = 20
         AND h.ISLEMTIPI = 1
         AND h.FISTAR >= DATEADD(day, -180, CAST(GETDATE() AS date))
         AND NULLIF(LTRIM(RTRIM(s.KOD)), '') IS NOT NULL
@@ -426,6 +427,7 @@ class BaytService {
         INNER JOIN CARI c ON c.ID = h.CARIID
         WHERE c.KOD = @cariCode
           AND ISNULL(h.IPTAL, 0) = 0
+          AND h.FISTIP = 20
           AND h.ISLEMTIPI = 1
           AND NULLIF(LTRIM(RTRIM(s.KOD)), '') IS NOT NULL
       `);
@@ -466,6 +468,7 @@ class BaytService {
         INNER JOIN CARI c ON c.ID = h.CARIID
         WHERE c.KOD = @cariCode
           AND ISNULL(h.IPTAL, 0) = 0
+          AND h.FISTIP = 20
           AND h.ISLEMTIPI = 1
           ${codeFilter}
       )
