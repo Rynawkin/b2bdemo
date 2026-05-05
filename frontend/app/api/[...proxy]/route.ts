@@ -7,11 +7,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 function resolveBackendUrl(): string {
-  const fallback = process.env.NODE_ENV === 'production'
-    ? 'http://138.197.187.138'
-    : 'http://localhost:5000';
+  if (process.env.NODE_ENV === 'production') {
+    return 'http://138.197.187.138';
+  }
 
-  const raw = process.env.BACKEND_URL || process.env.NEXT_PUBLIC_API_URL || fallback;
+  const raw = process.env.BACKEND_URL || process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
   return raw.replace(/\/api\/?$/, '').replace(/\/$/, '');
 }
 
