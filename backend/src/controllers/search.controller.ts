@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import stockF10Service from '../services/stock-f10.service';
 import customerF10Service from '../services/customer-f10.service';
 import prisma from '../utils/prisma';
+import { config } from '../config';
 
 /**
  * GET /api/search/stocks/columns
@@ -107,6 +108,59 @@ export const getStocksByCodes = async (req: Request, res: Response) => {
     const { codes } = req.body as { codes?: string[] };
     if (!Array.isArray(codes) || codes.length === 0) {
       return res.json({ success: true, data: [] });
+    }
+
+    if (config.erpProvider === 'bayt') {
+      const uniqueCodes = Array.from(
+        new Set(
+          codes
+            .map((code) => String(code || '').trim())
+            .filter(Boolean)
+        )
+      ).slice(0, 500);
+
+      const products = await prisma.product.findMany({
+        where: {
+          active: true,
+          mikroCode: { in: uniqueCodes },
+        },
+        select: {
+          mikroCode: true,
+          name: true,
+          unit: true,
+          vatRate: true,
+          currentCost: true,
+          lastEntryPrice: true,
+          warehouseStocks: true,
+        },
+      });
+
+      const result = products.map((product) => {
+        const warehouseStocks = (product.warehouseStocks || {}) as Record<string, unknown>;
+        const stockValues = Object.values(warehouseStocks).map((value) =>
+          Math.max(0, Number(value) || 0)
+        );
+        const totalStock = stockValues.reduce((sum, value) => sum + value, 0);
+        const primaryStock = Math.max(0, Number(warehouseStocks['1']) || 0);
+        return {
+          msg_S_0078: product.mikroCode,
+          msg_S_0870: product.name,
+          'Stok Kodu': product.mikroCode,
+          'Stok Adı': product.name,
+          'Stok Adi': product.name,
+          'Birim': product.unit,
+          'KDV Oranı': product.vatRate,
+          'KDV Orani': product.vatRate,
+          'Güncel Maliyet + Kdv.': product.currentCost ?? product.lastEntryPrice ?? 0,
+          'Guncel Maliyet + Kdv.': product.currentCost ?? product.lastEntryPrice ?? 0,
+          'Merkez Depo': primaryStock,
+          'Toplam Satılabilir': totalStock,
+          'Toplam Satilabilir': totalStock,
+          warehouseStocks,
+        };
+      });
+
+      return res.json({ success: true, data: result, total: result.length });
     }
 
     const result = await stockF10Service.getStocksByCodes(codes);
