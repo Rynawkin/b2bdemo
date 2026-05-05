@@ -296,7 +296,7 @@ class BaytService {
     return result.recordset.map((row: any) => ({
       productCode: this.trim(row.productCode),
       warehouseCode: this.trim(row.warehouseCode),
-      quantity: Number(row.quantity) || 0,
+      quantity: Math.max(0, Number(row.quantity) || 0),
       pendingSales: Number(row.pendingSales) || 0,
       pendingPurchases: Number(row.pendingPurchases) || 0,
     }));
