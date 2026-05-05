@@ -105,7 +105,7 @@ type PoolSortOption = 'default' | 'stock1_desc' | 'stock6_desc' | 'price_asc' | 
 type PoolColorRule = {
   id: string;
   enabled: boolean;
-  warehouse: '1' | '6';
+  warehouse: string;
   operator: '>' | '>=' | '<' | '<=' | '=';
   threshold: number;
   color: 'green' | 'yellow' | 'blue' | 'red' | 'slate';
@@ -124,11 +124,11 @@ const createPoolColorRule = (overrides?: Partial<PoolColorRule>): PoolColorRule 
 const normalizePoolColorRule = (rule?: Partial<PoolColorRule> | null): PoolColorRule => {
   const validOperator = rule?.operator;
   const validColor = rule?.color;
-  const validWarehouse = rule?.warehouse;
+  const validWarehouse = resolveWarehouseValue(String(rule?.warehouse || '1'));
   return {
     id: typeof rule?.id === 'string' && rule.id ? rule.id : createPoolColorRule().id,
     enabled: Boolean(rule?.enabled),
-    warehouse: validWarehouse === '6' ? '6' : '1',
+    warehouse: validWarehouse || '1',
     operator: validOperator && ['>', '>=', '<', '<=', '='].includes(validOperator) ? validOperator : '>',
     threshold: Number.isFinite(Number(rule?.threshold)) ? Number(rule?.threshold) : 0,
     color: validColor && ['green', 'yellow', 'blue', 'red', 'slate'].includes(validColor) ? validColor : 'green',
@@ -137,8 +137,7 @@ const normalizePoolColorRule = (rule?: Partial<PoolColorRule> | null): PoolColor
 
 const POOL_SORT_OPTIONS: Array<{ value: PoolSortOption; label: string }> = [
   { value: 'default', label: 'Varsayilan Siralama' },
-  { value: 'stock1_desc', label: 'Merkez Depo Stok (Yuksekten)' },
-  { value: 'stock6_desc', label: 'Topca Depo Stok (Yuksekten)' },
+  { value: 'stock1_desc', label: 'Depo Stok (Yuksekten)' },
   { value: 'price_asc', label: 'Fiyat (Dusukten)' },
   { value: 'price_desc', label: 'Fiyat (Yuksekten)' },
 ];
@@ -284,7 +283,7 @@ const parseDecimalInput = (input: string) => {
   return { value: Number.isFinite(parsed) ? parsed : undefined };
 };
 
-const getStockNumber = (product: QuoteProduct, warehouse: '1' | '6') => {
+const getStockNumber = (product: QuoteProduct, warehouse: string) => {
   const value = product.warehouseStocks?.[warehouse];
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
@@ -460,6 +459,30 @@ function AdminQuoteNewPageContent() {
   const [orderWarehouse, setOrderWarehouse] = useState('');
   const [orderInvoicedSeries, setOrderInvoicedSeries] = useState('');
   const [orderWhiteSeries, setOrderWhiteSeries] = useState('');
+
+  const poolWarehouseCodes = useMemo(() => {
+    const source = includedWarehouses.length > 0 ? includedWarehouses : ['1'];
+    return Array.from(
+      new Set(
+        source
+          .map((warehouse) => resolveWarehouseValue(String(warehouse)))
+          .filter(Boolean)
+      )
+    );
+  }, [includedWarehouses]);
+
+  const getWarehouseLabel = (warehouse: string) => {
+    const raw = includedWarehouses.find((item) => resolveWarehouseValue(String(item)) === warehouse);
+    const rawText = String(raw || '').trim();
+    if (rawText && !/^\d+$/.test(rawText)) return rawText;
+    if (warehouse === '1') return 'Merkez Depo';
+    return `Depo ${warehouse}`;
+  };
+
+  const getWarehouseStockText = (product: QuoteProduct) =>
+    poolWarehouseCodes
+      .map((warehouse) => `${getWarehouseLabel(warehouse)} ${formatStockValue(product.warehouseStocks?.[warehouse])}`)
+      .join(' | ');
   const [orderCustomerOrderNumber, setOrderCustomerOrderNumber] = useState('');
   const [orderDocumentDescription, setOrderDocumentDescription] = useState('');
   const [bulkResponsibilityCenter, setBulkResponsibilityCenter] = useState('');
@@ -911,6 +934,18 @@ function AdminQuoteNewPageContent() {
     if (settingsResult.status === 'fulfilled') {
       const warehouses = settingsResult.value?.includedWarehouses || [];
       setIncludedWarehouses(warehouses);
+      const warehouseCodes = Array.from(
+        new Set(warehouses.map((warehouse: string) => resolveWarehouseValue(String(warehouse))).filter(Boolean))
+      );
+      if (warehouseCodes.length > 0) {
+        setPoolColorRules((prev) =>
+          prev.map((rule) => (
+            warehouseCodes.includes(rule.warehouse)
+              ? rule
+              : { ...rule, warehouse: warehouseCodes[0] }
+          ))
+        );
+      }
       if (!orderWarehouse && warehouses.length > 0) {
         setOrderWarehouse(resolveWarehouseValue(String(warehouses[0])));
       }
@@ -1014,10 +1049,10 @@ function AdminQuoteNewPageContent() {
     const sorted = [...items];
     switch (poolSort) {
       case 'stock1_desc':
-        sorted.sort((a, b) => getStockNumber(b, '1') - getStockNumber(a, '1'));
+        sorted.sort((a, b) => getStockNumber(b, poolWarehouseCodes[0] || '1') - getStockNumber(a, poolWarehouseCodes[0] || '1'));
         break;
       case 'stock6_desc':
-        sorted.sort((a, b) => getStockNumber(b, '6') - getStockNumber(a, '6'));
+        sorted.sort((a, b) => getStockNumber(b, poolWarehouseCodes[1] || poolWarehouseCodes[0] || '1') - getStockNumber(a, poolWarehouseCodes[1] || poolWarehouseCodes[0] || '1'));
         break;
       case 'price_asc':
         sorted.sort((a, b) => getProductSortPrice(a) - getProductSortPrice(b));
@@ -1033,12 +1068,12 @@ function AdminQuoteNewPageContent() {
 
   const sortedPurchasedProducts = useMemo(
     () => sortPoolProducts(filteredPurchasedProducts),
-    [filteredPurchasedProducts, poolSort]
+    [filteredPurchasedProducts, poolSort, poolWarehouseCodes]
   );
 
   const sortedSearchResults = useMemo(
     () => sortPoolProducts(filteredSearchResults),
-    [filteredSearchResults, poolSort]
+    [filteredSearchResults, poolSort, poolWarehouseCodes]
   );
 
   const updatePoolColorRule = (id: string, patch: Partial<PoolColorRule>) => {
@@ -3406,11 +3441,14 @@ function AdminQuoteNewPageContent() {
                       </label>
                       <select
                         value={rule.warehouse}
-                        onChange={(e) => updatePoolColorRule(rule.id, { warehouse: e.target.value as '1' | '6' })}
+                        onChange={(e) => updatePoolColorRule(rule.id, { warehouse: e.target.value })}
                         className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs"
                       >
-                        <option value="1">Merkez</option>
-                        <option value="6">Topca</option>
+                        {poolWarehouseCodes.map((warehouse) => (
+                          <option key={warehouse} value={warehouse}>
+                            {getWarehouseLabel(warehouse)}
+                          </option>
+                        ))}
                       </select>
                       <select
                         value={rule.operator}
@@ -3461,7 +3499,7 @@ function AdminQuoteNewPageContent() {
                   Kural Ekle
                 </Button>
                 <span className="text-[11px] text-slate-400">
-                  Ornek: Merkez buyuk 0 = yesil
+                  Ornek: Depo stogu buyuk 0 = yesil
                 </span>
               </div>
             </div>
@@ -3549,13 +3587,7 @@ function AdminQuoteNewPageContent() {
                                 {product.mikroCode}
                                 {product.unit ? ` - ${product.unit}` : ''}
                               </p>
-                              <div className="mt-1 text-xs text-slate-500">
-                                <span className="font-medium text-slate-600">Merkez</span>{' '}
-                                {formatStockValue(product.warehouseStocks?.['1'])}
-                                <span className="mx-2 text-slate-300">|</span>
-                                <span className="font-medium text-slate-600">Topca</span>{' '}
-                                {formatStockValue(product.warehouseStocks?.['6'])}
-                              </div>
+                              <div className="mt-1 text-xs text-slate-500">{getWarehouseStockText(product)}</div>
                               {unitLabel && (
                                 <div className="mt-1 text-xs text-slate-500">{unitLabel}</div>
                               )}
@@ -3702,13 +3734,7 @@ function AdminQuoteNewPageContent() {
                             <div>
                               <p className="font-semibold text-gray-900">{product.name}</p>
                               <p className="text-xs text-gray-500">{product.mikroCode}</p>
-                              <div className="mt-1 text-xs text-slate-500">
-                                <span className="font-medium text-slate-600">Merkez</span>{' '}
-                                {formatStockValue(product.warehouseStocks?.['1'])}
-                                <span className="mx-2 text-slate-300">|</span>
-                                <span className="font-medium text-slate-600">Topca</span>{' '}
-                                {formatStockValue(product.warehouseStocks?.['6'])}
-                              </div>
+                              <div className="mt-1 text-xs text-slate-500">{getWarehouseStockText(product)}</div>
                               {unitLabel && (
                                 <div className="mt-1 text-xs text-slate-500">{unitLabel}</div>
                               )}

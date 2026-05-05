@@ -450,23 +450,29 @@ class BaytService {
       : '';
 
     const result = await request.query(`
-      SELECT TOP (@limit)
-        s.KOD AS productCode,
-        h.FISTAR AS saleDate,
-        h.MIKTAR AS quantity,
-        h.FIYAT AS unitPrice,
-        h.TUTAR AS lineTotal,
-        ISNULL(h.KDVTUTARI, 0) AS vatAmount,
-        ISNULL(h.KDVORANI, 0) AS vatRate,
-        COALESCE(h.FATFISNO, h.STKFISNO, h.SIPNO, h.TEKLIFNO, h.BAGLI_FISNO) AS documentNo
-      FROM STK_FIS_HAR h
-      INNER JOIN STOK s ON s.ID = h.KARTID
-      INNER JOIN CARI c ON c.ID = h.CARIID
-      WHERE c.KOD = @cariCode
-        AND ISNULL(h.IPTAL, 0) = 0
-        AND h.ISLEMTIPI = 1
-        ${codeFilter}
-      ORDER BY h.FISTAR DESC, h.ID DESC
+      WITH rankedSales AS (
+        SELECT
+          s.KOD AS productCode,
+          h.FISTAR AS saleDate,
+          h.MIKTAR AS quantity,
+          h.FIYAT AS unitPrice,
+          h.TUTAR AS lineTotal,
+          ISNULL(h.KDVTUTARI, 0) AS vatAmount,
+          ISNULL(h.KDVORANI, 0) AS vatRate,
+          COALESCE(h.FATFISNO, h.STKFISNO, h.SIPNO, h.TEKLIFNO, h.BAGLI_FISNO) AS documentNo,
+          ROW_NUMBER() OVER (PARTITION BY s.KOD ORDER BY h.FISTAR DESC, h.ID DESC) AS rn
+        FROM STK_FIS_HAR h
+        INNER JOIN STOK s ON s.ID = h.KARTID
+        INNER JOIN CARI c ON c.ID = h.CARIID
+        WHERE c.KOD = @cariCode
+          AND ISNULL(h.IPTAL, 0) = 0
+          AND h.ISLEMTIPI = 1
+          ${codeFilter}
+      )
+      SELECT productCode, saleDate, quantity, unitPrice, lineTotal, vatAmount, vatRate, documentNo
+      FROM rankedSales
+      WHERE rn <= @limit
+      ORDER BY saleDate DESC
     `);
 
     return result.recordset.map((row: any) => ({
