@@ -2,7 +2,7 @@
  * Admin Routes
  */
 
-import { Router } from 'express';
+import { NextFunction, Request, Response, Router } from 'express';
 import adminController from '../controllers/admin.controller';
 import quoteController from '../controllers/quote.controller';
 import taskController from '../controllers/task.controller';
@@ -20,6 +20,7 @@ import {
 import { trackStaffApiActivity } from '../middleware/staff-activity.middleware';
 import { validateBody } from '../middleware/validation.middleware';
 import { upload, taskUpload, invoiceUpload, supplierPriceListUpload, quoteItemImageUpload } from '../middleware/upload.middleware';
+import { config } from '../config';
 import { z } from 'zod';
 
 const router = Router();
@@ -27,6 +28,16 @@ const router = Router();
 // TÃ¼m route'lar authentication gerektirir, role kontrolÃ¼ route bazÄ±nda yapÄ±lÄ±r
 router.use(authenticate);
 router.use(trackStaffApiActivity);
+
+const blockBaytLegacyReports = (req: Request, res: Response, next: NextFunction) => {
+  if (config.erpProvider === 'bayt') {
+    return res.status(404).json({
+      error: 'Bu eski rapor Bayt/OtoOlgun tenantinda desteklenmiyor.',
+      code: 'FEATURE_DISABLED',
+    });
+  }
+  return next();
+};
 
 // Validation schemas
 const createCustomerSchema = z.object({
@@ -450,6 +461,13 @@ router.get('/caris/available', requirePermission('admin:staff'), adminController
 router.post('/users/bulk-create', requirePermission('admin:staff'), adminController.bulkCreateUsers);
 
 // Reports - Staff (all can access reports)
+router.use('/reports/ucarer-depo', blockBaytLegacyReports);
+router.use('/reports/ucarer-incoming-order-details', blockBaytLegacyReports);
+router.use('/reports/ucarer-product-sales-history', blockBaytLegacyReports);
+router.use('/reports/ucarer-product-purchase-history', blockBaytLegacyReports);
+router.use('/reports/ucarer-minmax', blockBaytLegacyReports);
+router.use('/reports/product-families/create-supplier-orders', blockBaytLegacyReports);
+router.use('/reports/product-families/create-depot-transfer-order', blockBaytLegacyReports);
 router.get('/reports/cost-update-alerts', requirePermission('reports:cost-update-alerts'), adminController.getCostUpdateAlerts);
 router.get('/reports/margin-compliance', requirePermission('reports:margin-compliance'), adminController.getMarginComplianceReport);
 router.post('/reports/margin-compliance/sync', requirePermission('reports:margin-compliance'), adminController.syncMarginComplianceReport);

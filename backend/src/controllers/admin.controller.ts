@@ -22,6 +22,7 @@ import exclusionService from '../services/exclusion.service';
 import priceListService from '../services/price-list.service';
 import productComplementService from '../services/product-complement.service';
 import MIKRO_TABLES from '../config/mikro-tables';
+import { config } from '../config';
 import { splitSearchTokens } from '../utils/search';
 import { CreateCustomerRequest, SetCategoryPriceRuleRequest } from '../types';
 
@@ -274,7 +275,7 @@ export class AdminController {
         settings = await prisma.settings.create({
           data: {
             calculationPeriodMonths: 3,
-            includedWarehouses: ['DEPO1', 'MERKEZ'],
+            includedWarehouses: config.erpProvider === 'bayt' ? ['1'] : ['DEPO1', 'MERKEZ'],
             minimumExcessThreshold: 10,
             costCalculationMethod: 'LAST_ENTRY',
             customerPriceLists: DEFAULT_CUSTOMER_PRICE_LISTS,
@@ -2104,6 +2105,13 @@ export class AdminController {
    */
   async createManualOrder(req: Request, res: Response, next: NextFunction) {
     try {
+      if (config.erpProvider === 'bayt') {
+        return res.status(409).json({
+          error: 'Bayt ERP read-only modunda manuel siparis yazma desteklenmiyor.',
+          code: 'ERP_READ_ONLY',
+        });
+      }
+
       const {
         customerId,
         items,
@@ -2149,6 +2157,13 @@ export class AdminController {
    */
   async approveOrder(req: Request, res: Response, next: NextFunction) {
     try {
+      if (config.erpProvider === 'bayt') {
+        return res.status(409).json({
+          error: 'Bayt ERP read-only modunda siparis onaylayip ERPye yazma desteklenmiyor.',
+          code: 'ERP_READ_ONLY',
+        });
+      }
+
       const { id } = req.params;
       const { adminNote, invoicedSeries, whiteSeries } = req.body || {};
       const userRole = req.user?.role;
@@ -2248,6 +2263,13 @@ export class AdminController {
    */
   async approveOrderItems(req: Request, res: Response, next: NextFunction) {
     try {
+      if (config.erpProvider === 'bayt') {
+        return res.status(409).json({
+          error: 'Bayt ERP read-only modunda siparis kalemi onaylayip ERPye yazma desteklenmiyor.',
+          code: 'ERP_READ_ONLY',
+        });
+      }
+
       const { id } = req.params;
       const { itemIds, adminNote, invoicedSeries, whiteSeries } = req.body || {};
       const userRole = req.user?.role;

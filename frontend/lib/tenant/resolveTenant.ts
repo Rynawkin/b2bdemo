@@ -29,7 +29,7 @@ export const defaultTenant: TenantPublicConfig = {
   features: {
     vade: true,
     eInvoice: true,
-    warehouse: true,
+    warehouse: false,
     supplierPriceLists: true,
     customerActivity: true,
     diverseyStock: false,

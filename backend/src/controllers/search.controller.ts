@@ -4,12 +4,98 @@ import customerF10Service from '../services/customer-f10.service';
 import prisma from '../utils/prisma';
 import { config } from '../config';
 
+const BAYT_STOCK_COLUMNS = [
+  'msg_S_0078',
+  'msg_S_0870',
+  'Stok Kodu',
+  'Stok Adi',
+  'Birim',
+  'KDV Orani',
+  'Guncel Maliyet + Kdv.',
+  'Merkez Depo',
+  'Toplam Satilabilir',
+];
+
+const BAYT_CUSTOMER_COLUMNS = [
+  'msg_S_1032',
+  'msg_S_1033',
+  'Cari Kodu',
+  'Cari Adi',
+  'IL',
+  'ILCE',
+  'Telefon',
+  'Vergi No',
+  'SEKTOR KODU',
+  'GRUP KODU',
+  'Bakiye',
+];
+
+const tokenizeSearch = (value?: string): string[] =>
+  String(value || '')
+    .replace(/\*/g, ' ')
+    .split(/\s+/)
+    .map((token) => token.trim())
+    .filter(Boolean);
+
+const toNumber = (value: unknown): number => Number(value) || 0;
+
+const getProductStockSummary = (warehouseStocks: unknown) => {
+  const stocks = (warehouseStocks || {}) as Record<string, unknown>;
+  const total = Object.values(stocks).reduce<number>((sum, value) => sum + Math.max(0, toNumber(value)), 0);
+  const primary = Math.max(0, toNumber(stocks['1']));
+  return { stocks, total, primary };
+};
+
+const mapProductToBaytF10Row = (product: any) => {
+  const stock = getProductStockSummary(product.warehouseStocks);
+  const costWithVat = toNumber(product.currentCost ?? product.lastEntryPrice);
+  return {
+    msg_S_0078: product.mikroCode,
+    msg_S_0870: product.name,
+    'Stok Kodu': product.mikroCode,
+    'Stok Adi': product.name,
+    'Stok AdÄ±': product.name,
+    Birim: product.unit,
+    'KDV Orani': product.vatRate,
+    'KDV OranÄ±': product.vatRate,
+    'Guncel Maliyet + Kdv.': costWithVat,
+    'GÃ¼ncel Maliyet + Kdv.': costWithVat,
+    'Merkez Depo': stock.primary,
+    'Toplam Satilabilir': stock.total,
+    'Toplam SatÄ±labilir': stock.total,
+    warehouseStocks: stock.stocks,
+  };
+};
+
+const mapCustomerToBaytF10Row = (customer: any) => {
+  const name = customer.displayName || customer.mikroName || customer.name || customer.mikroCariCode || '';
+  return {
+    msg_S_1032: customer.mikroCariCode,
+    msg_S_1033: name,
+    'Cari Kodu': customer.mikroCariCode,
+    'Cari Adi': name,
+    'Cari AdÄ±': name,
+    IL: customer.city || '',
+    ILCE: customer.district || '',
+    Telefon: customer.phone || '',
+    'Vergi No': '',
+    'SEKTOR KODU': customer.sectorCode || '',
+    'GRUP KODU': customer.groupCode || '',
+    Bakiye: customer.balance || 0,
+    active: customer.active,
+  };
+};
+
 /**
  * GET /api/search/stocks/columns
  * Stok F10 için tüm mevcut kolonları döndürür
  */
 export const getStockColumns = async (req: Request, res: Response) => {
   try {
+    if (config.erpProvider === 'bayt') {
+      return res.json({ columns: BAYT_STOCK_COLUMNS });
+    }
+
     const columns = stockF10Service.getAvailableColumns();
     res.json({ columns });
   } catch (error: any) {
@@ -61,6 +147,10 @@ export const getStockUnits = async (req: Request, res: Response) => {
  */
 export const getCustomerColumns = async (req: Request, res: Response) => {
   try {
+    if (config.erpProvider === 'bayt') {
+      return res.json({ columns: BAYT_CUSTOMER_COLUMNS });
+    }
+
     const columns = customerF10Service.getAvailableColumns();
     res.json({ columns });
   } catch (error: any) {
@@ -80,11 +170,51 @@ export const getCustomerColumns = async (req: Request, res: Response) => {
 export const searchStocks = async (req: Request, res: Response) => {
   try {
     const { searchTerm, limit = 100, offset = 0 } = req.query;
+    const parsedLimit = Math.max(1, Math.min(parseInt(limit as string, 10) || 100, 500));
+    const parsedOffset = Math.max(0, parseInt(offset as string, 10) || 0);
+
+    if (config.erpProvider === 'bayt') {
+      const tokens = tokenizeSearch(searchTerm as string);
+      const products = await prisma.product.findMany({
+        where: {
+          active: true,
+          ...(tokens.length > 0
+            ? {
+                AND: tokens.map((token) => ({
+                  OR: [
+                    { mikroCode: { contains: token, mode: 'insensitive' as const } },
+                    { name: { contains: token, mode: 'insensitive' as const } },
+                    { foreignName: { contains: token, mode: 'insensitive' as const } },
+                    { brandCode: { contains: token, mode: 'insensitive' as const } },
+                  ],
+                })),
+              }
+            : {}),
+        },
+        select: {
+          mikroCode: true,
+          name: true,
+          foreignName: true,
+          brandCode: true,
+          unit: true,
+          vatRate: true,
+          currentCost: true,
+          lastEntryPrice: true,
+          warehouseStocks: true,
+        },
+        orderBy: { mikroCode: 'asc' },
+        take: parsedLimit,
+        skip: parsedOffset,
+      });
+
+      const result = products.map(mapProductToBaytF10Row);
+      return res.json({ success: true, data: result, total: result.length });
+    }
 
     const result = await stockF10Service.searchStocks({
       searchTerm: searchTerm as string,
-      limit: parseInt(limit as string, 10),
-      offset: parseInt(offset as string, 10)
+      limit: parsedLimit,
+      offset: parsedOffset
     });
 
     res.json({
@@ -182,11 +312,56 @@ export const getStocksByCodes = async (req: Request, res: Response) => {
 export const searchCustomers = async (req: Request, res: Response) => {
   try {
     const { searchTerm, limit = 100, offset = 0 } = req.query;
+    const parsedLimit = Math.max(1, Math.min(parseInt(limit as string, 10) || 100, 500));
+    const parsedOffset = Math.max(0, parseInt(offset as string, 10) || 0);
+
+    if (config.erpProvider === 'bayt') {
+      const tokens = tokenizeSearch(searchTerm as string);
+      const customers = await prisma.user.findMany({
+        where: {
+          role: 'CUSTOMER',
+          mikroCariCode: { not: null },
+          ...(tokens.length > 0
+            ? {
+                AND: tokens.map((token) => ({
+                  OR: [
+                    { mikroCariCode: { contains: token, mode: 'insensitive' as const } },
+                    { name: { contains: token, mode: 'insensitive' as const } },
+                    { mikroName: { contains: token, mode: 'insensitive' as const } },
+                    { displayName: { contains: token, mode: 'insensitive' as const } },
+                    { city: { contains: token, mode: 'insensitive' as const } },
+                    { district: { contains: token, mode: 'insensitive' as const } },
+                  ],
+                })),
+              }
+            : {}),
+        },
+        select: {
+          mikroCariCode: true,
+          name: true,
+          mikroName: true,
+          displayName: true,
+          city: true,
+          district: true,
+          phone: true,
+          sectorCode: true,
+          groupCode: true,
+          balance: true,
+          active: true,
+        },
+        orderBy: [{ displayName: 'asc' }, { name: 'asc' }],
+        take: parsedLimit,
+        skip: parsedOffset,
+      });
+
+      const result = customers.map(mapCustomerToBaytF10Row);
+      return res.json({ success: true, data: result, total: result.length });
+    }
 
     const result = await customerF10Service.searchCustomers({
       searchTerm: searchTerm as string,
-      limit: parseInt(limit as string, 10),
-      offset: parseInt(offset as string, 10)
+      limit: parsedLimit,
+      offset: parsedOffset
     });
 
     res.json({

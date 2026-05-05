@@ -1,5 +1,8 @@
 ﻿import mikroFactory from './mikroFactory.service';
 
+import prisma from '../utils/prisma';
+import { config } from '../config';
+
 interface CariHareketParams {
   cariKod: string;
   startDate?: string; // YYYY-MM-DD format
@@ -34,6 +37,48 @@ class CariHareketService {
 
     // SQL injection'dan korunmak iÃ§in parametreleri escape et
     const escapedCariKod = cariKod.replace(/'/g, "''");
+
+    if (config.erpProvider === 'bayt') {
+      const customer = await prisma.user.findFirst({
+        where: { mikroCariCode: cariKod },
+        select: { balance: true },
+      });
+
+      let rows: any[] = [];
+      try {
+        const sales = await mikroFactory.getCustomerSalesMovements(cariKod, [], 500);
+        rows = sales
+          .filter((sale: any) => {
+            const date = sale.saleDate ? new Date(sale.saleDate) : null;
+            if (!date || Number.isNaN(date.getTime())) return false;
+            return date >= new Date(defaultStartDate) && date < new Date(`${defaultEndDate}T23:59:59`);
+          })
+          .map((sale: any) => ({
+            Seri: '',
+            Sira: sale.documentNo || '',
+            'SÄ±ra': sale.documentNo || '',
+            Tarih: sale.saleDate,
+            'Belge No': sale.documentNo || '',
+            'Evrak Tipi': 'Satis Faturasi',
+            'Odeme Tipi': '',
+            'Hareket Tipi': 'Alacak',
+            'Tip Kodu': 1,
+            Tutar: Number(sale.lineTotal) || 0,
+          }));
+      } catch (error) {
+        console.warn('Bayt cari hareket satis hareketleri okunamadi:', error);
+      }
+
+      const balance = Number(customer?.balance) || 0;
+      return {
+        rows,
+        opening: {
+          borc: balance > 0 ? balance : 0,
+          alacak: balance < 0 ? Math.abs(balance) : 0,
+          bakiye: balance,
+        },
+      };
+    }
 
     const openingQuery = `
       SELECT
@@ -88,6 +133,50 @@ class CariHareketService {
   async searchCariForEkstre(params: CariSearchParams = {}): Promise<any> {
     const { searchTerm, limit = 100 } = params;
 
+    if (config.erpProvider === 'bayt') {
+      const tokens = buildSqlSearchTokens(searchTerm);
+      const customers = await prisma.user.findMany({
+        where: {
+          role: 'CUSTOMER',
+          mikroCariCode: { not: null },
+          ...(tokens.length > 0
+            ? {
+                AND: tokens.map((token) => ({
+                  OR: [
+                    { mikroCariCode: { contains: token, mode: 'insensitive' as const } },
+                    { name: { contains: token, mode: 'insensitive' as const } },
+                    { mikroName: { contains: token, mode: 'insensitive' as const } },
+                    { displayName: { contains: token, mode: 'insensitive' as const } },
+                  ],
+                })),
+              }
+            : {}),
+        },
+        select: {
+          mikroCariCode: true,
+          name: true,
+          mikroName: true,
+          displayName: true,
+          sectorCode: true,
+          groupCode: true,
+          balance: true,
+        },
+        orderBy: [{ displayName: 'asc' }, { name: 'asc' }],
+        take: Math.max(1, Math.min(Number(limit) || 100, 500)),
+      });
+
+      return customers.map((customer) => ({
+        'Cari Kodu': customer.mikroCariCode,
+        'Cari Adi': customer.displayName || customer.mikroName || customer.name,
+        'Cari AdÄ±': customer.displayName || customer.mikroName || customer.name,
+        'Vergi No': '',
+        'Sektor Kodu': customer.sectorCode || '',
+        'SektÃ¶r Kodu': customer.sectorCode || '',
+        'Grup Kodu': customer.groupCode || '',
+        Bakiye: customer.balance || 0,
+      }));
+    }
+
     let whereClause = "cari_grup_kodu NOT LIKE 'FATURA' and cari_sektor_kodu NOT LIKE 'FATURA' and cari_sektor_kodu NOT LIKE 'DÄ°ÄER' and cari_grup_kodu NOT LIKE 'DÄ°ÄER'";
 
     if (searchTerm && searchTerm.trim()) {
@@ -126,6 +215,37 @@ class CariHareketService {
    */
   async getCariInfo(cariKod: string): Promise<any> {
     const escapedCariKod = cariKod.replace(/'/g, "''");
+
+    if (config.erpProvider === 'bayt') {
+      const customer = await prisma.user.findFirst({
+        where: { mikroCariCode: cariKod },
+        select: {
+          mikroCariCode: true,
+          name: true,
+          mikroName: true,
+          displayName: true,
+          sectorCode: true,
+          groupCode: true,
+          balance: true,
+        },
+      });
+
+      if (!customer) return null;
+      const name = customer.displayName || customer.mikroName || customer.name;
+      return {
+        'Cari Kodu': customer.mikroCariCode,
+        'Cari Adi': name,
+        'Cari AdÄ±': name,
+        'Cari Adi 2': '',
+        'Cari AdÄ± 2': '',
+        'Sektor Kodu': customer.sectorCode || '',
+        'SektÃ¶r Kodu': customer.sectorCode || '',
+        'Grup Kodu': customer.groupCode || '',
+        'Vergi Dairesi': '',
+        'Vergi No': '',
+        Bakiye: customer.balance || 0,
+      };
+    }
 
     const query = `
       SELECT

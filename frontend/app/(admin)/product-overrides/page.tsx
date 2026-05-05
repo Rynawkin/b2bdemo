@@ -303,7 +303,7 @@ export default function AdminProductOverridesPage() {
                     <div className="space-y-3">
                       <div className="relative group bg-white rounded-lg border-2 border-gray-300 overflow-hidden aspect-square">
                         <img
-                          src={`http://localhost:5000${selectedProduct.imageUrl}`}
+                          src={selectedProduct.imageUrl}
                           alt={selectedProduct.name}
                           className="w-full h-full object-contain"
                         />

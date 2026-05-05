@@ -83,11 +83,11 @@ const otoOlgunTenant: TenantConfig = {
   features: {
     vade: true,
     eInvoice: true,
-    warehouse: true,
+    warehouse: false,
     supplierPriceLists: true,
     customerActivity: true,
-    diverseyStock: true,
-    ucarerReports: true,
+    diverseyStock: false,
+    ucarerReports: false,
   },
   integrations: {
     erp: 'generic',
@@ -95,11 +95,8 @@ const otoOlgunTenant: TenantConfig = {
     warehouse: {
       labels: {
         '1': 'Merkez',
-        '2': 'Eregli',
-        '6': 'Topca',
-        '7': 'Dukkan',
       },
-      includedWarehouseCodes: ['1', '2', '6', '7'],
+      includedWarehouseCodes: ['1'],
       defaultResponsibilityCenter: process.env.ERP_SORMERK || process.env.MIKRO_SORMERK || '',
     },
   },

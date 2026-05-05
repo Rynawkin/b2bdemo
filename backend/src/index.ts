@@ -155,6 +155,11 @@ if (config.enableCron) {
 
   console.log('Quote sync cron schedule:', config.quoteSyncCronSchedule, 'Timezone:', config.cronTimezone);
   cron.schedule(config.quoteSyncCronSchedule, async () => {
+    if (config.erpProvider === 'bayt') {
+      console.log('Quote sync skipped: Bayt ERP read-only mode');
+      return;
+    }
+
     console.log('Quote sync started...');
     try {
       const result = await quoteService.syncQuotesFromMikro();

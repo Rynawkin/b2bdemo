@@ -7,12 +7,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 function resolveBackendUrl(): string {
-  if (process.env.NODE_ENV === 'production') {
-    return 'http://138.197.187.138';
-  }
-
-  const fallback =
-    'http://localhost:5000';
+  const fallback = process.env.NODE_ENV === 'production'
+    ? 'http://138.197.187.138'
+    : 'http://localhost:5000';
 
   const raw = process.env.BACKEND_URL || process.env.NEXT_PUBLIC_API_URL || fallback;
   return raw.replace(/\/api\/?$/, '').replace(/\/$/, '');

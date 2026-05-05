@@ -177,14 +177,14 @@ export function ProductDetailModal({ product, isOpen, onClose, onAddToCart, allo
     ? product.excessStock ?? 0
     : getDisplayStock(product);
   const warehouseBreakdown = isDiscounted ? product.warehouseExcessStocks : product.warehouseStocks;
-  const warehouseLabels: Record<string, string> = { '1': 'Merkez Depo', '6': 'Topça Depo' };
+  const warehouseLabels: Record<string, string> = { '1': 'Merkez Depo' };
   const warehouseEntries = Object.entries(warehouseBreakdown || {})
     .map(([warehouse, stock]) => {
       const match = String(warehouse).match(/\d+/);
       const key = match ? match[0] : warehouse;
       return { key, stock: Number(stock) || 0 };
     })
-    .filter(({ key, stock }) => (key === '1' || key === '6') && stock > 0);
+    .filter(({ stock }) => stock > 0);
   const listInvoiced = product.listPrices?.invoiced;
   const listWhite = product.listPrices?.white;
   const excessInvoiced = product.excessPrices?.invoiced;
@@ -310,7 +310,7 @@ export function ProductDetailModal({ product, isOpen, onClose, onAddToCart, allo
                 <div className="space-y-2">
                   {warehouseEntries.map(({ key, stock }) => (
                     <div key={key} className="flex justify-between items-center text-sm">
-                      <span className="text-gray-700 font-medium">{warehouseLabels[key] || key}</span>
+                      <span className="text-gray-700 font-medium">{warehouseLabels[key] || `Depo ${key}`}</span>
                       <span className="bg-white px-3 py-1 rounded-lg border border-gray-200 font-semibold text-gray-900">
                         {stock} {product.unit}
                       </span>

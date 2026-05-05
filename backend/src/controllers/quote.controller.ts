@@ -6,6 +6,7 @@ import { Request, Response, NextFunction } from 'express';
 import quoteService from '../services/quote.service';
 import { prisma } from '../utils/prisma';
 import mikroService from '../services/mikroFactory.service';
+import { config } from '../config';
 
 export class QuoteController {
   /**
@@ -306,6 +307,14 @@ export class QuoteController {
    */
   async syncQuoteFromMikro(req: Request, res: Response, next: NextFunction) {
     try {
+      if (config.erpProvider === 'bayt') {
+        return res.json({
+          updated: false,
+          skipped: true,
+          message: 'Bayt ERP read-only modunda teklif senkronizasyonu desteklenmiyor.',
+        });
+      }
+
       const { id } = req.params;
       const result = await quoteService.syncQuoteFromMikro(id);
       res.json(result);
@@ -319,6 +328,13 @@ export class QuoteController {
    */
   async convertQuoteToOrder(req: Request, res: Response, next: NextFunction) {
     try {
+      if (config.erpProvider === 'bayt') {
+        return res.status(409).json({
+          error: 'Bayt ERP read-only modunda tekliften siparis olusturma desteklenmiyor.',
+          code: 'ERP_READ_ONLY',
+        });
+      }
+
       const { id } = req.params;
       const {
         selectedItemIds,

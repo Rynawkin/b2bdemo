@@ -2,6 +2,7 @@ import { prisma } from '../utils/prisma';
 import mikroService from './mikroFactory.service';
 import vadeService from './vade.service';
 import { VadeBalanceSource, VadeSyncStatus } from '@prisma/client';
+import { config } from '../config';
 
 type MikroVadeRow = {
   customerCode: string;
@@ -71,6 +72,35 @@ const normalizeBalanceBuckets = (pastDueBalance: number, notDueBalance: number) 
 
 class VadeSyncService {
   private async fetchMikroBalances(): Promise<MikroVadeRow[]> {
+    if (config.erpProvider === 'bayt') {
+      const customers = await prisma.user.findMany({
+        where: {
+          role: 'CUSTOMER',
+          mikroCariCode: { not: null },
+          active: true,
+        },
+        select: {
+          mikroCariCode: true,
+          balance: true,
+          paymentPlanName: true,
+          updatedAt: true,
+        },
+      });
+
+      return customers.map((customer) => {
+        const balance = normalizeAmount(customer.balance);
+        return {
+          customerCode: String(customer.mikroCariCode || '').trim(),
+          pastDueBalance: balance > 0 ? balance : 0,
+          pastDueDate: balance > 0 ? new Date() : null,
+          notDueBalance: balance < 0 ? balance : 0,
+          notDueDate: null,
+          paymentTermLabel: customer.paymentPlanName || null,
+          referenceDate: customer.updatedAt || new Date(),
+        };
+      });
+    }
+
     const query = `
       SELECT
         c.cari_kod AS customerCode,
